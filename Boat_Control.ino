@@ -1,4 +1,5 @@
 #include <ArduinoBLE.h>
+#include <TinyGPS++.h>
 
 BLEService boatService("fff0");
 
@@ -8,6 +9,8 @@ BLEStringCharacteristic debugCharacteristic("45c1eda2-4473-42a3-8143-dc79c30a64b
 BLECharCharacteristic commandCharacteristic("05c6cc87-7888-4588-b794-92bdf9a29330", BLEWrite);
 BLECharacteristic coordsCharacteristic("3794c841-1b53-4029-aebb-12319386fd28", BLEWrite, 16*MAXCOORDS, true);
 BLECharacteristic telemetryCharacteristic("ccc03716-4f66-4cb8-b6fd-9b2278587add", BLENotify, 100, false);
+
+TinyGPSPlus gps;
 
 unsigned long prevMillis = 0;
 
@@ -28,7 +31,6 @@ void setup() {
     }
 
     Serial.begin(9600);
-    while (!Serial) {};
 
     pinMode(LED_BUILTIN, OUTPUT);
 
@@ -41,8 +43,6 @@ void setup() {
     BLE.addService(boatService);
 
     BLE.advertise();
-
-    Serial.println("Looking for devices");
 }
 
 void loop() {
@@ -50,19 +50,16 @@ void loop() {
     BLEDevice central = BLE.central();
 
     if (central){
-        Serial.println("Device found");
         digitalWrite(LED_BUILTIN, HIGH);
 
         while (central.connected()){
             unsigned long currentMillis = millis();
             if (currentMillis - prevMillis > 100){
-                readCommand();
-                outputTelemetry();
+                processEvents();
             }
         }
 
         digitalWrite(LED_BUILTIN, LOW);
-        Serial.println("Device disconnected");
     }
 }
 
@@ -78,42 +75,64 @@ void outputTelemetry(){
     telemetryCharacteristic.writeValue((byte*) telemOutput, 16);
 }
 
-void readCommand(){
-    if (commandCharacteristic.written()){
-        char cmd = commandCharacteristic.value();
-        switch(cmd){
-            case 'a':
-                debugCharacteristic.writeValue("Command a\n");
-                break;
-            default :
-                debugCharacteristic.writeValue("Something else");
-                break;
+void processCommand(){
+    char cmd = commandCharacteristic.value();
+    switch(cmd){
+        case 'a':
+            debugCharacteristic.writeValue("Command a\n");
+            break;
+        default :
+            debugCharacteristic.writeValue("Something else");
+            break;
+    }
+}
+
+void processCoords(){
+    numWaypoints = MAXCOORDS;
+    for (int i = 0;i < MAXCOORDS*2; i++){
+        double* pCoords = (double*) coordsCharacteristic.value();
+        waypointPointer = 0;
+        if (abs(pCoords[i]) < 0.01){
+            // Check odd coords sent
+            if (i % 2 == 1){
+                debugCharacteristic.writeValue("Invalid coord count");
+            } else {
+                numWaypoints = i / 2;
+            }
+            break; // We are done reading
+        }else{
+            // Add waypoint
+            waypointCoords[i] = pCoords[i];
         }
     }
 
-    if (coordsCharacteristic.written()){
-        Serial.println("Coords were written");
-        numWaypoints = MAXCOORDS;
-        for (int i = 0;i < MAXCOORDS*2; i++){
-            double* pCoords = (double*) coordsCharacteristic.value();
-            waypointPointer = 0;
-            Serial.print("Current double: ");
-            Serial.println(pCoords[i]);
-            if (abs(pCoords[i]) < 0.01){
-                // Check odd coords sent
-                if (i % 2 == 1){
-                    debugCharacteristic.writeValue("Invalid coord count");
-                } else {
-                    numWaypoints = i / 2;
-                }
-                break;
-            }else{
-                // Add waypoint
-                waypointCoords[i] = pCoords[i];
-            }
+    String output = "Coords written: ";
+    output += numWaypoints;
+    debugCharacteristic.writeValue(output);
+}
+
+void processGPS(){
+    static bool gpsFound = false;
+    if (gps.location.isValid()){
+        if (gpsFound == false){
+            // Run once
+            debugCharacteristic.writeValue("Found GPS");
+            gpsFound = true;
         }
-        String output = "Coords written: ";
-        output += numWaypoints;
-        debugCharacteristic.writeValue(output);
     }
+}
+
+void processEvents(){
+    if (commandCharacteristic.written()){
+        processCommand();
+    }
+    if (coordsCharacteristic.written()){
+        processCoords();
+    }
+
+    while (Serial.available()){
+        if (gps.encode(Serial.read()))
+            processGPS();
+    }
+    outputTelemetry();
 }
