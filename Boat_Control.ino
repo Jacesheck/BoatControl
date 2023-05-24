@@ -7,12 +7,15 @@ const int MAXCOORDS = 32;
 BLEStringCharacteristic debugCharacteristic("45c1eda2-4473-42a3-8143-dc79c30a64bf", BLENotify | BLERead, 100);
 BLECharCharacteristic commandCharacteristic("05c6cc87-7888-4588-b794-92bdf9a29330", BLEWrite);
 BLECharacteristic coordsCharacteristic("3794c841-1b53-4029-aebb-12319386fd28", BLEWrite, 16*MAXCOORDS, true);
+BLECharacteristic telemetryCharacteristic("ccc03716-4f66-4cb8-b6fd-9b2278587add", BLENotify, 100, false);
 
 unsigned long prevMillis = 0;
 
 int numWaypoints = 0;
 int waypointPointer = 0;
 double waypointCoords[10] = {};
+
+byte telemOutput[100];
 
 void setup() {
     if (!BLE.begin()){
@@ -34,6 +37,7 @@ void setup() {
     boatService.addCharacteristic(debugCharacteristic);
     boatService.addCharacteristic(commandCharacteristic);
     boatService.addCharacteristic(coordsCharacteristic);
+    boatService.addCharacteristic(telemetryCharacteristic);
     BLE.addService(boatService);
 
     BLE.advertise();
@@ -53,12 +57,25 @@ void loop() {
             unsigned long currentMillis = millis();
             if (currentMillis - prevMillis > 100){
                 readCommand();
+                outputTelemetry();
             }
         }
 
         digitalWrite(LED_BUILTIN, LOW);
         Serial.println("Device disconnected");
     }
+}
+
+void outputTelemetry(){
+    double gpsX = 100.;
+    double gpsY = 200.;
+
+    int i = 0;
+    memcpy(&telemOutput[i], &gpsX, sizeof(gpsX));
+    i += sizeof(gpsX);
+    memcpy(&telemOutput[i], &gpsY, sizeof(gpsY));
+
+    telemetryCharacteristic.writeValue((byte*) telemOutput, 16);
 }
 
 void readCommand(){
