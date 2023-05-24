@@ -20,6 +20,16 @@ double waypointCoords[10] = {};
 
 byte telemOutput[100];
 
+bool homeSet = false;
+double homeLat;
+double homeLng;
+
+const unsigned int telemSize = sizeof(double)*4;
+double *p_x   = (double*) (telemOutput);
+double *p_y   = (double*) (telemOutput + 8);
+double *p_lat = (double*) (telemOutput + 16);
+double *p_lng = (double*) (telemOutput + 24);
+
 void setup() {
     if (!BLE.begin()){
         while(1){
@@ -31,6 +41,7 @@ void setup() {
     }
 
     Serial.begin(9600);
+    Serial1.begin(9600);
 
     pinMode(LED_BUILTIN, OUTPUT);
 
@@ -46,7 +57,7 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+    // put your main code here, to run repeatedly:
     BLEDevice central = BLE.central();
 
     if (central){
@@ -63,23 +74,13 @@ void loop() {
     }
 }
 
-void outputTelemetry(){
-    double gpsX = 100.;
-    double gpsY = 200.;
-
-    int i = 0;
-    memcpy(&telemOutput[i], &gpsX, sizeof(gpsX));
-    i += sizeof(gpsX);
-    memcpy(&telemOutput[i], &gpsY, sizeof(gpsY));
-
-    telemetryCharacteristic.writeValue((byte*) telemOutput, 16);
-}
 
 void processCommand(){
     char cmd = commandCharacteristic.value();
     switch(cmd){
-        case 'a':
-            debugCharacteristic.writeValue("Command a\n");
+        case 'h':
+            debugCharacteristic.writeValue("Home reset");
+            homeSet = false;
             break;
         default :
             debugCharacteristic.writeValue("Something else");
@@ -112,17 +113,41 @@ void processCoords(){
 }
 
 void processGPS(){
-    static bool gpsFound = false;
+    Serial.print("Valid ");
+    Serial.println(gps.location.isValid());
     if (gps.location.isValid()){
-        if (gpsFound == false){
-            // Run once
-            debugCharacteristic.writeValue("Found GPS");
-            gpsFound = true;
+        if (homeSet == false){
+            homeLat = gps.location.lat();
+            homeLng = gps.location.lng();
+            homeSet = true;
+        } else {
+            double lat = gps.location.lat();
+            double lng = gps.location.lng();
+            double dist = TinyGPSPlus::distanceBetween(
+                homeLat,
+                homeLng,
+                lat,
+                lng);
+            double angle = TinyGPSPlus::courseTo(
+                homeLat,
+                homeLng,
+                lat,
+                lng);
+            double x = dist*cos(angle*DEG_TO_RAD);
+            double y = dist*sin(angle*DEG_TO_RAD);
+            memcpy(p_x, &x, 8);
+            memcpy(p_y, &y, 8);
+            memcpy(p_lat, &lat, 8);
+            memcpy(p_lng, &lng, 8);
         }
+    } else {
+        debugCharacteristic.writeValue("Location not available");
     }
 }
 
 void processEvents(){
+    // Only runs if connected to device
+
     if (commandCharacteristic.written()){
         processCommand();
     }
@@ -130,9 +155,10 @@ void processEvents(){
         processCoords();
     }
 
-    while (Serial.available()){
-        if (gps.encode(Serial.read()))
+    while (Serial1.available() > 0){
+        if (gps.encode(Serial1.read())){
             processGPS();
+        }
     }
-    outputTelemetry();
+    telemetryCharacteristic.writeValue((byte*) telemOutput, telemSize);
 }
