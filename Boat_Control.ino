@@ -3,6 +3,7 @@
 #include <Servo.h>
 #include "sbus.h"
 #include "wiring_private.h"
+#include <Arduino_LSM6DS3.h>
 
 #define GPS_RX 5
 #define GPS_TX 6
@@ -53,7 +54,11 @@ bool g_frskyZeroSet = false;
 float g_frskyZeroX;
 float g_frskyZeroY;
 
-const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(long)*2;
+// IMU data
+float rx, ry;
+
+// Telemetry data
+const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(long)*2 + sizeof(float);
 byte g_telemOutput[100];
 double* p_x    = (double*) (g_telemOutput);
 double* p_y    = (double*) (g_telemOutput + 8);
@@ -61,6 +66,7 @@ double* p_lat  = (double*) (g_telemOutput + 16);
 double* p_lng  = (double*) (g_telemOutput + 24);
 long* p_power1 = (long*)   (g_telemOutput + 32);
 long* p_power2 = (long*)   (g_telemOutput + 36);
+float* p_rz    = (float*)  (g_telemOutput + 40);
 
 void setup() {
     if (!BLE.begin()){
@@ -81,6 +87,10 @@ void setup() {
     sbus.Begin();
 
     pinMode(LED_BUILTIN, OUTPUT);
+
+    if (!IMU.begin()){
+        Serial.println("IMU failed");
+    }
 
     BLE.setLocalName("Boat");
     BLE.setAdvertisedService(boatService);
@@ -180,8 +190,8 @@ void processGPS(){
                 g_homeLng,
                 lat,
                 lng);
-            double x = dist*cos(angle*DEG_TO_RAD);
-            double y = dist*sin(angle*DEG_TO_RAD);
+            double x = -dist*sin(angle*DEG_TO_RAD);
+            double y = dist*cos(angle*DEG_TO_RAD);
             memcpy(p_x, &x, 8);
             memcpy(p_y, &y, 8);
             memcpy(p_lat, &lat, 8);
@@ -275,6 +285,10 @@ void processEvents(){
 
     if (g_manualControl){
         getRCControl();
+    }
+
+    if (IMU.gyroscopeAvailable()){
+        IMU.readGyroscope(rx, ry, *p_rz);
     }
 
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
