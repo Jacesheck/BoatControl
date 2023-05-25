@@ -10,6 +10,8 @@
 #define MOTOR2 8
 #define MOTOR_TEST false
 
+#define EVENT_PERIOD 100
+
 BLEService boatService("fff0");
 
 // Please don't change
@@ -33,10 +35,6 @@ bfs::SbusData data;
 Servo g_motor1;
 Servo g_motor2;
 
-unsigned long g_prevMillis = 0;
-
-byte g_telemOutput[100];
-
 // Waypoint data
 int g_numWaypoints = 0;
 int g_waypointPointer = 0;
@@ -55,11 +53,14 @@ bool g_frskyZeroSet = false;
 float g_frskyZeroX;
 float g_frskyZeroY;
 
-const unsigned int TELEM_SIZE = sizeof(double)*4;
-double *p_x   = (double*) (g_telemOutput);
-double *p_y   = (double*) (g_telemOutput + 8);
-double *p_lat = (double*) (g_telemOutput + 16);
-double *p_lng = (double*) (g_telemOutput + 24);
+const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(long)*2;
+byte g_telemOutput[100];
+double* p_x    = (double*) (g_telemOutput);
+double* p_y    = (double*) (g_telemOutput + 8);
+double* p_lat  = (double*) (g_telemOutput + 16);
+double* p_lng  = (double*) (g_telemOutput + 24);
+long* p_power1 = (long*)   (g_telemOutput + 32);
+long* p_power2 = (long*)   (g_telemOutput + 36);
 
 void setup() {
     if (!BLE.begin()){
@@ -95,13 +96,16 @@ void setup() {
 void loop() {
     // put your main code here, to run repeatedly:
     BLEDevice central = BLE.central();
+    static unsigned long prevMillis = 0;
 
     if (central){
         digitalWrite(LED_BUILTIN, HIGH);
 
         while (central.connected()){
             unsigned long currentMillis = millis();
-            if (currentMillis - g_prevMillis > 100){
+            unsigned long dt = currentMillis - prevMillis;
+            if (dt > EVENT_PERIOD){
+                prevMillis = currentMillis;
                 processEvents();
             }
         }
@@ -109,7 +113,12 @@ void loop() {
         digitalWrite(LED_BUILTIN, LOW);
     }
     if (g_manualControl){
-        getRCControl();
+        unsigned long currentMillis = millis();
+        unsigned long dt = currentMillis - prevMillis;
+        if (dt > EVENT_PERIOD){
+            getRCControl();
+            prevMillis = currentMillis;
+        }
     }
 
 }
@@ -243,6 +252,8 @@ void getRCControl(){
     #else
     g_motor1.writeMicroseconds(power1);
     g_motor2.writeMicroseconds(power2);
+    memcpy(p_power1, &power1, 4);
+    memcpy(p_power2, &power2, 4);
     #endif
 }
 
@@ -261,5 +272,10 @@ void processEvents(){
             processGPS();
         }
     }
+
+    if (g_manualControl){
+        getRCControl();
+    }
+
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
 }
