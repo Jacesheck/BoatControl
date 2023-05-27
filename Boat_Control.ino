@@ -81,6 +81,9 @@ void setup() {
     Serial.begin(9600);
     gpsSerial.begin(9600);
 
+    g_motor1.attach(MOTOR1);
+    g_motor1.arrach(MOTOR2);
+
     pinPeripheral(GPS_RX, PIO_SERCOM_ALT);
     pinPeripheral(GPS_TX, PIO_SERCOM_ALT);
 
@@ -190,7 +193,7 @@ void processGPS(){
                 g_homeLng,
                 lat,
                 lng);
-            double x = -dist*sin(angle*DEG_TO_RAD);
+            double x = dist*sin(angle*DEG_TO_RAD);
             double y = dist*cos(angle*DEG_TO_RAD);
             memcpy(p_x, &x, 8);
             memcpy(p_y, &y, 8);
