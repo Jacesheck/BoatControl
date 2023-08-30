@@ -1,7 +1,7 @@
 #include <ArduinoBLE.h>
 #include <TinyGPS++.h>
 #include <Servo.h>
-#include "sbus.h"
+#include <sbus.h>
 #include "wiring_private.h"
 #include <Arduino_LSM6DS3.h>
 
@@ -82,7 +82,7 @@ void setup() {
     gpsSerial.begin(9600);
 
     g_motor1.attach(MOTOR1);
-    g_motor1.arrach(MOTOR2);
+    g_motor1.attach(MOTOR2);
 
     pinPeripheral(GPS_RX, PIO_SERCOM_ALT);
     pinPeripheral(GPS_TX, PIO_SERCOM_ALT);
