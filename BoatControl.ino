@@ -53,9 +53,6 @@ const int DEADZONE = 100;
 
 // Will do rc control
 bool g_manualControl = true;
-bool g_frskyZeroSet = false;
-float g_frskyZeroX;
-float g_frskyZeroY;
 
 // IMU data
 float rx, ry;
@@ -228,19 +225,23 @@ void getRCControl(){
     int dir1 = 0;
     int dir2 = 0;
 
+    static bool frskyZeroSet = false;
+    static float frskyZeroX = 0;
+    static float frskyZeroY = 0;
+
     if (sbus.Read()){
         data = sbus.data();
-        if (g_frskyZeroSet){
-            x = data.ch[1] - g_frskyZeroX;
-            y = data.ch[2] - g_frskyZeroY;
+        if (frskyZeroSet){
+            x = data.ch[1] - frskyZeroX;
+            y = data.ch[2] - frskyZeroY;
 
             m = data.ch[4];
             dir1 = data.ch[5];
             dir2 = data.ch[6];
         } else {
-            g_frskyZeroX = data.ch[1];
-            g_frskyZeroY = data.ch[2];
-            g_frskyZeroSet = true;
+            frskyZeroX = data.ch[1];
+            frskyZeroY = data.ch[2];
+            frskyZeroSet = true;
         }
     } else {
         static uint8_t i = 0;
