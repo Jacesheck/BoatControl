@@ -18,8 +18,6 @@ BLEService boatService("fff0");
 // Please don't change
 const int MAXCOORDS = 32;
 
-constexpr int MOTOR_IDLE = 1475;
-
 // Bluetooth setup
 BLEStringCharacteristic debugCharacteristic("45c1eda2-4473-42a3-8143-dc79c30a64bf", BLENotify | BLERead, 100);
 BLECharCharacteristic commandCharacteristic("05c6cc87-7888-4588-b794-92bdf9a29330", BLEWrite);
@@ -35,8 +33,10 @@ void SERCOM0_Handler(){
 // Frsky setup
 bfs::SbusRx sbus(&Serial1);
 bfs::SbusData data;
-Servo g_motor1;
-Servo g_motor2;
+
+// Motor setup
+constexpr int MOTOR_IDLE = 1475;
+bool g_motorsInitialised = false;
 
 // Waypoint data
 int g_numWaypoints = 0;
@@ -85,9 +85,6 @@ void setup() {
 
     gpsSerial.begin(9600);
 
-    g_motor1.attach(MOTOR1);
-    g_motor2.attach(MOTOR2);
-
     pinPeripheral(GPS_RX, PIO_SERCOM_ALT);
     pinPeripheral(GPS_TX, PIO_SERCOM_ALT);
 
@@ -107,7 +104,21 @@ void setup() {
 
     BLE.advertise();
 
+    delay(2000);
+
     Serial.println("Starting up");
+
+    // Will block for bluetooth
+    BLEDevice central = BLE.central();
+    Serial.println("Waiting for central");
+    while (!central) { central = BLE.central(); } // Wait for bluetooth
+    Serial.println("Connected");
+    while (!commandCharacteristic.written()){
+        central.connected();
+        debugCharacteristic.writeValue("Waiting for char...");
+        delay(100);
+    } // Wait for write
+    commandCharacteristic.value(); // Throw away value
 }
 
 void loop() {
@@ -117,6 +128,7 @@ void loop() {
 
     if (central){
         digitalWrite(LED_BUILTIN, HIGH);
+        Serial.println("Central connect");
 
         while (central.connected()){
             unsigned long currentMillis = millis();
@@ -130,16 +142,115 @@ void loop() {
         digitalWrite(LED_BUILTIN, LOW);
     }
 
-    if (g_manualControl){
-        unsigned long currentMillis = millis();
-        unsigned long dt = currentMillis - prevMillis;
-        if (dt > EVENT_PERIOD){
-            getRCControl();
-            prevMillis = currentMillis;
+    // Only allow rc control once motors are Initialised
+    // This is because the motor initialisation is currently
+    // done through bluetooth
+    // (Subject to change)
+    if (g_motorsInitialised) {
+        if (g_manualControl){
+            unsigned long currentMillis = millis();
+            unsigned long dt = currentMillis - prevMillis;
+            if (dt > EVENT_PERIOD){
+                getRCControl();
+                prevMillis = currentMillis;
+            }
         }
     }
 }
 
+class MotorHandler {
+    Servo* mpLeft = nullptr;
+    Servo* mpRight = nullptr;
+
+    bool mLeftReversed = false;
+    bool mRightReversed = false;
+
+public:
+    MotorHandler() {
+        // Motor initialisation
+        Serial.println("Starting motor init");
+        Servo* newMotor = new Servo;
+
+        BLEDevice central = BLE.central();
+        // Find which is left/right motors
+        newMotor->attach(MOTOR1);
+        newMotor->writeMicroseconds(MOTOR_IDLE + 200);
+        Serial.println("Sending debug");
+        debugCharacteristic.writeValue("Which motor is runnig (l, r)");
+        Serial.println("Sent debug");
+        while (!commandCharacteristic.written()) { central.connected(); delay(100); }
+        Serial.println("Got response");
+        if (commandCharacteristic.value() == 'l') {
+            mpLeft = newMotor;
+            mpRight = new Servo;
+            mpRight->attach(MOTOR2);
+        } else {
+            mpRight = newMotor;
+            mpLeft = new Servo;
+            mpLeft->attach(MOTOR2);
+        }
+        newMotor->writeMicroseconds(MOTOR_IDLE);
+
+        // Test left motor reversed
+        mpLeft->writeMicroseconds(MOTOR_IDLE + 200);
+        debugCharacteristic.writeValue("Running left (f, b)");
+        while (!commandCharacteristic.written()) { central.connected(); delay(100); }
+        if (commandCharacteristic.value() == 'b') {
+            debugCharacteristic.writeValue("Reversing left");
+            mLeftReversed = true;
+        }
+        mpLeft->writeMicroseconds(MOTOR_IDLE);
+
+        // Test right motor reversed
+        mpRight->writeMicroseconds(MOTOR_IDLE + 200);
+        debugCharacteristic.writeValue("Running right (f, b)");
+        while (!commandCharacteristic.written()) { central.connected(); delay(100); }
+        if (commandCharacteristic.value() == 'b') {
+            debugCharacteristic.writeValue("Reversing right");
+            mRightReversed = true;
+        }
+        mpRight->writeMicroseconds(MOTOR_IDLE);
+
+        debugCharacteristic.writeValue("Finished motor init");
+    }
+
+    void run(int m, int x, int y) {
+        long powerLeft = y + x;
+        long powerRight = y - x;
+
+        // Swap motor direction
+        if(mLeftReversed){
+            powerLeft*=-1;
+        }
+        if(mRightReversed){
+            powerRight*=-1;
+        }
+
+        powerLeft = powerLeft*m/4000 + MOTOR_IDLE;
+        powerRight = powerRight*m/4000 + MOTOR_IDLE;
+
+        powerLeft = constrain(powerLeft, 1100, 1900);
+        powerRight = constrain(powerRight, 1100, 1900);
+
+        #if(MOTOR_TEST)
+        Serial.print("Motor1: ");
+        Serial.print(power1);
+        Serial.print(", Motor2: ");
+        Serial.println(power2);
+
+        Serial.print("Left reversed: ");
+        Serial.print(mLeftReversed);
+        Serial.print(", Right reversed: ");
+        Serial.println(mRightReversed);
+        delay(100);
+        #else
+        mpLeft->writeMicroseconds(powerLeft);
+        mpRight->writeMicroseconds(powerRight);
+        memcpy(p_power1, &powerLeft, sizeof(long));
+        memcpy(p_power2, &powerRight, sizeof(long));
+        #endif
+    }
+};
 
 void processCommand(){
     char cmd = commandCharacteristic.value();
@@ -248,7 +359,6 @@ void getRCControl(){
         if (i++ % 100 == 0) {
             debugCharacteristic.writeValue("No RC controller connected");
         }
-        return;
     }
 
     // Deadzone
@@ -259,40 +369,10 @@ void getRCControl(){
         y = 0;
     }
 
-    long power1 = y + x;
-    long power2 = y - x;
-
-    // Swap motor direction
-    if(dir1 < 300){
-        power1*=-1;
-    }
-    if(dir2 < 300){
-        power2*=-1;
-    }
-
-    power1 = power1*m/4000 + MOTOR_IDLE;
-    power2 = power2*m/4000 + MOTOR_IDLE;
-
-    power1 = constrain(power1, 1100, 1900);
-    power2 = constrain(power2, 1100, 1900);
-
-    #if(MOTOR_TEST)
-    Serial.print("Motor1:");
-    Serial.print(power1);
-    Serial.print(",Motor2:");
-    Serial.print(power2);
-
-    Serial.print(",Dir1:");
-    Serial.print(dir1);
-    Serial.print(",Dir2:");
-    Serial.println(dir2);
-    delay(100);
-    #else
-    g_motor1.writeMicroseconds(power1);
-    g_motor2.writeMicroseconds(power2);
-    memcpy(p_power1, &power1, 4);
-    memcpy(p_power2, &power2, 4);
-    #endif
+    // Does not require rc to initialise
+    static MotorHandler handler;
+    g_motorsInitialised = true;
+    handler.run(m, x, y);
 }
 
 void processInputsAndSensors(){
