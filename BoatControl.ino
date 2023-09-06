@@ -5,6 +5,8 @@
 #include "wiring_private.h"
 #include <Arduino_LSM6DS3.h>
 
+#include "KalmanFilter.h"
+
 #define GPS_RX 5
 #define GPS_TX 6
 #define MOTOR1 7
