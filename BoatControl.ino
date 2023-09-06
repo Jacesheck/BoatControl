@@ -18,6 +18,8 @@ BLEService boatService("fff0");
 // Please don't change
 const int MAXCOORDS = 32;
 
+constexpr int MOTOR_IDLE = 1475;
+
 // Bluetooth setup
 BLEStringCharacteristic debugCharacteristic("45c1eda2-4473-42a3-8143-dc79c30a64bf", BLENotify | BLERead, 100);
 BLECharCharacteristic commandCharacteristic("05c6cc87-7888-4588-b794-92bdf9a29330", BLEWrite);
@@ -49,6 +51,7 @@ double g_homeLng;
 // Frsky Control
 const int DEADZONE = 100;
 
+// Will do rc control
 bool g_manualControl = true;
 bool g_frskyZeroSet = false;
 float g_frskyZeroX;
@@ -69,7 +72,10 @@ long* p_power2 = (long*)   (g_telemOutput + 36);
 float* p_rz    = (float*)  (g_telemOutput + 40);
 
 void setup() {
+    pinMode(LED_BUILTIN, OUTPUT);
+
     if (!BLE.begin()){
+        // Module failed
         while(1){
             digitalWrite(LED_BUILTIN, LOW);
             delay(1000);
@@ -79,17 +85,16 @@ void setup() {
     }
 
     Serial.begin(9600);
+
     gpsSerial.begin(9600);
 
     g_motor1.attach(MOTOR1);
-    g_motor1.attach(MOTOR2);
+    g_motor2.attach(MOTOR2);
 
     pinPeripheral(GPS_RX, PIO_SERCOM_ALT);
     pinPeripheral(GPS_TX, PIO_SERCOM_ALT);
 
     sbus.Begin();
-
-    pinMode(LED_BUILTIN, OUTPUT);
 
     if (!IMU.begin()){
         Serial.println("IMU failed");
@@ -104,6 +109,8 @@ void setup() {
     BLE.addService(boatService);
 
     BLE.advertise();
+
+    Serial.println("Starting up");
 }
 
 void loop() {
@@ -119,12 +126,13 @@ void loop() {
             unsigned long dt = currentMillis - prevMillis;
             if (dt > EVENT_PERIOD){
                 prevMillis = currentMillis;
-                processEvents();
+                processInputsAndSensors();
             }
         }
 
         digitalWrite(LED_BUILTIN, LOW);
     }
+
     if (g_manualControl){
         unsigned long currentMillis = millis();
         unsigned long dt = currentMillis - prevMillis;
@@ -133,13 +141,17 @@ void loop() {
             prevMillis = currentMillis;
         }
     }
-
 }
 
 
 void processCommand(){
     char cmd = commandCharacteristic.value();
     switch(cmd){
+        //case 'i':
+            //debugCharacteristic.writeValue("Initialising motors");
+            //g_initialiseMotors = true;
+            //g_startInitMotorTime = millis();
+            //break;
         case 'h':
             debugCharacteristic.writeValue("Home reset");
             g_homeSet = false;
@@ -201,10 +213,14 @@ void processGPS(){
             memcpy(p_lng, &lng, 8);
         }
     } else {
-        debugCharacteristic.writeValue("Location not available");
+        static uint32_t i = 0;
+        if (i++ % 20 == 0) {
+            debugCharacteristic.writeValue("Location not avail");
+        }
     }
 }
 
+// Runs motors according to rc controller
 void getRCControl(){
     int x;
     int y;
@@ -217,6 +233,7 @@ void getRCControl(){
         if (g_frskyZeroSet){
             x = data.ch[1] - g_frskyZeroX;
             y = data.ch[2] - g_frskyZeroY;
+
             m = data.ch[4];
             dir1 = data.ch[5];
             dir2 = data.ch[6];
@@ -245,8 +262,8 @@ void getRCControl(){
         power2*=-1;
     }
 
-    power1 = power1*m/4000 + 1500;
-    power2 = power2*m/4000 + 1500;
+    power1 = power1*m/4000 + MOTOR_IDLE;
+    power2 = power2*m/4000 + MOTOR_IDLE;
 
     power1 = constrain(power1, 1100, 1900);
     power2 = constrain(power2, 1100, 1900);
@@ -270,7 +287,7 @@ void getRCControl(){
     #endif
 }
 
-void processEvents(){
+void processInputsAndSensors(){
     // Only runs if connected to device
 
     if (commandCharacteristic.written()){
