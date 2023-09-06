@@ -242,6 +242,12 @@ void getRCControl(){
             g_frskyZeroY = data.ch[2];
             g_frskyZeroSet = true;
         }
+    } else {
+        static uint8_t i = 0;
+        if (i++ % 100 == 0) {
+            debugCharacteristic.writeValue("No RC controller connected");
+        }
+        return;
     }
 
     // Deadzone
@@ -255,6 +261,7 @@ void getRCControl(){
     long power1 = y + x;
     long power2 = y - x;
 
+    // Swap motor direction
     if(dir1 < 300){
         power1*=-1;
     }
