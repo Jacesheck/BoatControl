@@ -222,11 +222,11 @@ void processGPS(){
 
 // Runs motors according to rc controller
 void getRCControl(){
-    int x;
-    int y;
-    int m;
-    int dir1;
-    int dir2;
+    int x = 0;
+    int y = 0;
+    int m = 0;
+    int dir1 = 0;
+    int dir2 = 0;
 
     if (sbus.Read()){
         data = sbus.data();
