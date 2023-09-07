@@ -26,6 +26,7 @@ BLEUnsignedIntCharacteristic statusCharacteristic("6f04c0a3-f201-4091-a13d-5ecaf
 BLECharCharacteristic commandCharacteristic("05c6cc87-7888-4588-b794-92bdf9a29330", BLEWrite);
 BLECharacteristic coordsCharacteristic("3794c841-1b53-4029-aebb-12319386fd28", BLEWrite, 16*MAXCOORDS, true);
 BLECharacteristic telemetryCharacteristic("ccc03716-4f66-4cb8-b6fd-9b2278587add", BLENotify, 100, false);
+BLECharacteristic kalmanCharacteristic("933963ae-cc8e-4704-bd3c-dc53721ba956", BLENotify, 100, false);
 
 // Status setup
 enum status_e {
@@ -68,7 +69,7 @@ const int DEADZONE = 100;
 // Will do rc control
 bool g_manualControl = true;
 
-// IMU data
+// IMU data (not used)
 float rx, ry;
 
 // Telemetry data
@@ -81,6 +82,13 @@ double* p_lng  = (double*) (g_telemOutput + 24);
 long* p_power1 = (long*)   (g_telemOutput + 32);
 long* p_power2 = (long*)   (g_telemOutput + 36);
 float* p_rz    = (float*)  (g_telemOutput + 40);
+
+// Kalman data
+const unsigned int TELEM_SIZE = size
+// TODO: Create bluetooth data for this
+//byte g_kalmanOutput[100];
+//float p_kfX = (float*) (g_kalmanOutput) ;
+//float p_kfY = (float*) (g_kalmanOutput) ;
 
 // Kalman filter
 KalmanFilter kf(1. / (float) EVENT_PERIOD);
@@ -433,6 +441,15 @@ void getRCControl(){
     g_powerRight = g_powerRight*m/4000 + MOTOR_IDLE;
 }
 
+void handleKalmanFilter() {
+    kf.predict((float) g_powerLeft, (float) g_powerRight);
+    sensor_data sensors;
+    sensors.gpsX = *p_x;
+    sensors.gpsY = *p_y;
+    sensors.rz = *p_rz;
+    kf.update(sensors);
+}
+
 void processInputsAndSensors(){
     // Only runs if connected to device
     // Runs every 0.1 seconds
@@ -465,5 +482,7 @@ void processInputsAndSensors(){
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
 
     // Kalman filter
+    handleKalmanFilter();
+
     // TODO: Make motor inputs public 
 }

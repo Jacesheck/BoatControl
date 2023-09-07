@@ -1,6 +1,9 @@
 #include <BasicLinearAlgebra.h>
+//#include "../../../Arduino/libraries/BasicLinearAlgebra/BasicLinearAlgebra.h"
 #include <algorithm>
 #include <math.h>
+
+static constexpr float PI = 3.141592653589;
 
 using namespace BLA;
 
@@ -43,6 +46,11 @@ static float wrap180(float angle) {
     return angle;
 }
 
+static float courseTo(float dx, float dy) {
+    float ans = std::atan2(dx,dy);
+    return wrap360(ans * 180 / PI);
+}
+
 class KalmanFilter {
     float mB1 = 2.;
     float mB2 = 3.;
@@ -63,6 +71,40 @@ class KalmanFilter {
     
     Matrix<2,1> mU; // Input matrix
     Matrix<6,6> mI; // Identity matrix
+
+    void updateGPS(const sensor_data& sensors) {
+        Matrix<4,1> z = {sensors.gpsX,
+                         sensors.gpsY,
+                         sensors.courseGPS,
+                         sensors.rz};
+        Matrix<4,6> H = {1., 0., 0., 0., 0., 0.,
+                         0., 1., 0., 0., 0., 0.,
+                         0., 0., 0., 0., 1., 0.,
+                         0., 0., 0., 0., 0., 1.};
+        Matrix<4,4> R = {mGpsNoise, 0., 0., 0.,
+                         0., mGpsNoise, 0., 0.,
+                         0., 0., mGpsNoise/sensors.distGPS, 0.,
+                         0., 0., 0., mGyroNoise};
+
+        Matrix<4,1> y = z - H*mX;
+        Matrix<4,4> S = H*mP*~H + R;
+        Matrix<6,4> K = mP*~H*Inverse(S);
+        y(2) = wrap180(y(2)); // Wrap d_theta
+        mX    = mX + K*y;
+        mP    = (mI - K*H)*mP;
+    }
+
+    void updateNoGPS(float rz) {
+        rz = -rz;
+        Matrix<1,6> H = {0., 0., 0., 0., 0., 1.};
+        Matrix<1,1> R = {mGyroNoise};
+        Matrix<1,1> z = {rz};
+        Matrix<1,1> y = z - H*mX;
+        Matrix<1,1> S = H*mP*~H + R;
+        Matrix<6,1> K = mP*~H*Inverse(S);
+        mX = mX + K*y;
+        mP = (mI - K*H)*mP;
+    }
 
 public:
     KalmanFilter(float mDt) : mDt(mDt) {
@@ -111,10 +153,6 @@ public:
              0., 0., 0., 0., 0., 1.};
     }
 
-    void wrapTheta() {
-        mX(4) = wrap360(mX(4));
-    }
-
     void predict(float motor1, float motor2) {
         float theta_r = mX(4);
         float delta_theta = 1 - mDt*mB2;
@@ -134,53 +172,24 @@ public:
         mP = mF*mP*~mF + mQ;
     }
 
-    void updateGPS(const sensor_data& sensors) {
-        Matrix<4,1> z = {sensors.gpsX,
-                         sensors.gpsY,
-                         sensors.courseGPS,
-                         sensors.rz};
-        Matrix<4,6> H = {1., 0., 0., 0., 0., 0.,
-                         0., 1., 0., 0., 0., 0.,
-                         0., 0., 0., 0., 1., 0.,
-                         0., 0., 0., 0., 0., 1.};
-        Matrix<4,4> R = {mGpsNoise, 0., 0., 0.,
-                         0., mGpsNoise, 0., 0.,
-                         0., 0., mGpsNoise/sensors.distGPS, 0.,
-                         0., 0., 0., mGyroNoise};
-
-        Matrix<4,1> y = z - H*mX;
-        Matrix<4,4> S = H*mP*~H + R;
-        Matrix<6,4> K = mP*~H*Inverse(S);
-        y(2) = wrap180(y(2)); // Wrap d_theta
-        mX    = mX + K*y;
-        mP    = (mI - K*H)*mP;
-    }
-
-    void updateNoGPS(float rz) {
-        rz = -rz;
-        Matrix<1,6> H = {0., 0., 0., 0., 0., 1.};
-        Matrix<1,1> R = {mGyroNoise};
-        Matrix<1,1> z = {rz};
-        Matrix<1,1> y = z - H*mX;
-        Matrix<1,1> S = H*mP*~H + R;
-        Matrix<6,1> K = mP*~H*Inverse(S);
-        mX = mX + K*y;
-        mP = (mI - K*H)*mP;
-    }
-
     void update(const sensor_data& sensors) {
         static float lastX = 0;
         static float lastY = 0;
         if (sensors.gpsX != lastX ||
             sensors.gpsY != lastY) {
             // New gps data
+            float dx = lastX - gpsX;
+            float dy = lastX - gpsX;
+            sensors.distGPS = sqrt(pow(dx, 2.) + pow(dy, 2.));
+            sensors.courseGPS = courseTo(dx, dy);
+
             updateGPS(sensors);
         } else {
             // Old gps data
             updateNoGPS(sensors.rz);
         }
 
-        wrapTheta();
+        mX(4) = wrap360(mX(4));
 
         lastX = sensors.gpsX;
         lastY = sensors.gpsY;
