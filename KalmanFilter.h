@@ -185,4 +185,11 @@ public:
         lastX = sensors.gpsX;
         lastY = sensors.gpsY;
     }
+
+    void setHome() {
+        x(0) = 0;
+        y(0) = 0;
+        P(0,0) = mGpsNoise;
+        P(1,1) = mGpsNoise;
+    }
 };

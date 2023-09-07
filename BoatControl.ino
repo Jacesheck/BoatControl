@@ -82,6 +82,9 @@ long* p_power1 = (long*)   (g_telemOutput + 32);
 long* p_power2 = (long*)   (g_telemOutput + 36);
 float* p_rz    = (float*)  (g_telemOutput + 40);
 
+// Kalman filter
+KalmanFilter kf(1. / (float) EVENT_PERIOD);
+
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
 
@@ -462,4 +465,5 @@ void processInputsAndSensors(){
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
 
     // Kalman filter
+    // TODO: Make motor inputs public 
 }
