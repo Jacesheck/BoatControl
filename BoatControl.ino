@@ -167,6 +167,7 @@ class MotorHandler {
     bool mLeftReversed = false;
     bool mRightReversed = false;
 
+    // Ramp up motor until input is sent over bluetooth
     void rampMotor(Servo* motor) {
         BLEDevice central = BLE.central();
         long power = MOTOR_IDLE;
@@ -182,6 +183,7 @@ class MotorHandler {
     }
 
 public:
+    // Initialises motors
     MotorHandler() {
         Servo* firstMotor = new Servo;
         Servo* secondMotor = new Servo;
@@ -231,8 +233,10 @@ public:
         }
 
         debugCharacteristic.writeValue("Finished motor init");
+        g_motorsInitialised = true;
     }
 
+    // Run motors according to global powers
     void run() {
         // Copy from global
         long power_left = g_powerLeft;
@@ -240,10 +244,10 @@ public:
 
         // Swap motor direction if needed
         if(mLeftReversed){
-            power_left = MOTOR_IDLE - power_left;
+            power_left = (2 * MOTOR_IDLE) - power_left;
         }
         if(mRightReversed){
-            power_right = MOTOR_IDLE - power_right;
+            power_right = (2 * MOTOR_IDLE) - power_right;
         }
 
         power_left = constrain(power_left, 1100, 1900);
@@ -287,6 +291,7 @@ void processCommand(){
     }
 }
 
+// Get coordinates from coords characteristic
 void processCoords(){
     g_numWaypoints = MAXCOORDS;
     for (int i = 0;i < MAXCOORDS*2; i++){
@@ -311,6 +316,7 @@ void processCoords(){
     debugCharacteristic.writeValue(output);
 }
 
+// Poll gps once ready
 void processGPS(){
     if (gps.location.isValid()){
         if (g_homeSet == false){
@@ -350,8 +356,6 @@ void getRCControl(){
     int x = 0;
     int y = 0;
     int m = 0;
-    int dir1 = 0;
-    int dir2 = 0;
 
     static uint8_t timer = 0;
 
@@ -366,9 +370,8 @@ void getRCControl(){
             y = data.ch[2] - frskyZeroY;
 
             m = data.ch[4];
-            dir1 = data.ch[5];
-            dir2 = data.ch[6];
         } else {
+            // First time connection
             frskyZeroX = data.ch[1];
             frskyZeroY = data.ch[2];
             frskyZeroSet = true;
@@ -398,6 +401,7 @@ void getRCControl(){
 
 void processInputsAndSensors(){
     // Only runs if connected to device
+    // Runs every 0.1 seconds
 
     if (commandCharacteristic.written()){
         processCommand();
@@ -422,8 +426,9 @@ void processInputsAndSensors(){
 
     // Run motor
     static MotorHandler handler;
-    g_motorsInitialised = true;
     handler.run();
 
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
+
+    // Kalman filter
 }
