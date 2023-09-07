@@ -167,51 +167,68 @@ class MotorHandler {
     bool mLeftReversed = false;
     bool mRightReversed = false;
 
+    void rampMotor(Servo* motor) {
+        BLEDevice central = BLE.central();
+        long power = MOTOR_IDLE;
+        while (!commandCharacteristic.written()) {
+            power += 8;
+            if (power > 1900)
+                power = 1900;
+            motor->writeMicroseconds(power);
+            central.connected();
+            delay(100); 
+        }
+        motor->writeMicroseconds(MOTOR_IDLE);
+    }
+
 public:
     MotorHandler() {
-        // Motor initialisation
-        Serial.println("Starting motor init");
-        Servo* newMotor = new Servo;
+        Servo* firstMotor = new Servo;
+        Servo* secondMotor = new Servo;
+        firstMotor->attach(MOTOR1);
+        secondMotor->attach(MOTOR2);
+        firstMotor->writeMicroseconds(MOTOR_IDLE);
+        secondMotor->writeMicroseconds(MOTOR_IDLE);
 
+        // Motor initialisation (waits for another input)
+        debugCharacteristic.writeValue("Waiting for motor init");
         BLEDevice central = BLE.central();
+        while(!commandCharacteristic.written()) {
+            central.connected();
+            delay(100);
+        }
+        commandCharacteristic.value();
+        Serial.println("Starting motor init");
+
         // Find which is left/right motors
-        newMotor->attach(MOTOR1);
-        newMotor->writeMicroseconds(MOTOR_IDLE + 200);
         Serial.println("Sending debug");
         debugCharacteristic.writeValue("Which motor is runnig (l, r)");
         Serial.println("Sent debug");
-        while (!commandCharacteristic.written()) { central.connected(); delay(100); }
+        rampMotor(firstMotor);
         Serial.println("Got response");
         if (commandCharacteristic.value() == 'l') {
-            mpLeft = newMotor;
-            mpRight = new Servo;
-            mpRight->attach(MOTOR2);
+            mpLeft = firstMotor;
+            mpRight = secondMotor;
         } else {
-            mpRight = newMotor;
-            mpLeft = new Servo;
-            mpLeft->attach(MOTOR2);
+            mpRight = firstMotor;
+            mpLeft = secondMotor;
         }
-        newMotor->writeMicroseconds(MOTOR_IDLE);
 
         // Test left motor reversed
-        mpLeft->writeMicroseconds(MOTOR_IDLE + 200);
         debugCharacteristic.writeValue("Running left (f, b)");
-        while (!commandCharacteristic.written()) { central.connected(); delay(100); }
+        rampMotor(mpLeft);
         if (commandCharacteristic.value() == 'b') {
             debugCharacteristic.writeValue("Reversing left");
             mLeftReversed = true;
         }
-        mpLeft->writeMicroseconds(MOTOR_IDLE);
 
         // Test right motor reversed
-        mpRight->writeMicroseconds(MOTOR_IDLE + 200);
         debugCharacteristic.writeValue("Running right (f, b)");
-        while (!commandCharacteristic.written()) { central.connected(); delay(100); }
+        rampMotor(mpRight);
         if (commandCharacteristic.value() == 'b') {
             debugCharacteristic.writeValue("Reversing right");
             mRightReversed = true;
         }
-        mpRight->writeMicroseconds(MOTOR_IDLE);
 
         debugCharacteristic.writeValue("Finished motor init");
     }
@@ -223,10 +240,10 @@ public:
 
         // Swap motor direction if needed
         if(mLeftReversed){
-            power_left*=-1;
+            power_left = MOTOR_IDLE - power_left;
         }
         if(mRightReversed){
-            power_right*=-1;
+            power_right = MOTOR_IDLE - power_right;
         }
 
         power_left = constrain(power_left, 1100, 1900);
@@ -336,6 +353,8 @@ void getRCControl(){
     int dir1 = 0;
     int dir2 = 0;
 
+    static uint8_t timer = 0;
+
     static bool frskyZeroSet = false;
     static float frskyZeroX = 0;
     static float frskyZeroY = 0;
@@ -353,10 +372,11 @@ void getRCControl(){
             frskyZeroX = data.ch[1];
             frskyZeroY = data.ch[2];
             frskyZeroSet = true;
+            debugCharacteristic.writeValue("RC controller connected");
         }
+        timer = 0;
     } else {
-        static uint8_t i = 0;
-        if (i++ % 100 == 0) {
+        if (timer++ % 100 == 0) {
             debugCharacteristic.writeValue("No RC controller connected");
         }
     }
