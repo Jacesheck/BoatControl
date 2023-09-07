@@ -37,6 +37,8 @@ bfs::SbusData data;
 // Motor setup
 constexpr int MOTOR_IDLE = 1475;
 bool g_motorsInitialised = false;
+long g_powerLeft = MOTOR_IDLE;
+long g_powerRight = MOTOR_IDLE;
 
 // Waypoint data
 int g_numWaypoints = 0;
@@ -142,7 +144,7 @@ void loop() {
         digitalWrite(LED_BUILTIN, LOW);
     }
 
-    // Only allow rc control once motors are Initialised
+    // Only allow exclusive rc control once motors are Initialised
     // This is because the motor initialisation is currently
     // done through bluetooth
     // (Subject to change)
@@ -214,29 +216,27 @@ public:
         debugCharacteristic.writeValue("Finished motor init");
     }
 
-    void run(int m, int x, int y) {
-        long powerLeft = y + x;
-        long powerRight = y - x;
+    void run() {
+        // Copy from global
+        long power_left = g_powerLeft;
+        long power_right = g_powerRight;
 
-        // Swap motor direction
+        // Swap motor direction if needed
         if(mLeftReversed){
-            powerLeft*=-1;
+            power_left*=-1;
         }
         if(mRightReversed){
-            powerRight*=-1;
+            power_right*=-1;
         }
 
-        powerLeft = powerLeft*m/4000 + MOTOR_IDLE;
-        powerRight = powerRight*m/4000 + MOTOR_IDLE;
-
-        powerLeft = constrain(powerLeft, 1100, 1900);
-        powerRight = constrain(powerRight, 1100, 1900);
+        power_left = constrain(power_left, 1100, 1900);
+        power_right = constrain(power_right, 1100, 1900);
 
         #if(MOTOR_TEST)
-        Serial.print("Motor1: ");
-        Serial.print(power1);
-        Serial.print(", Motor2: ");
-        Serial.println(power2);
+        Serial.print("Left Motor: ");
+        Serial.print(power_left);
+        Serial.print(", Right Motor: ");
+        Serial.println(power_right);
 
         Serial.print("Left reversed: ");
         Serial.print(mLeftReversed);
@@ -244,10 +244,10 @@ public:
         Serial.println(mRightReversed);
         delay(100);
         #else
-        mpLeft->writeMicroseconds(powerLeft);
-        mpRight->writeMicroseconds(powerRight);
-        memcpy(p_power1, &powerLeft, sizeof(long));
-        memcpy(p_power2, &powerRight, sizeof(long));
+        mpLeft->writeMicroseconds(power_left);
+        mpRight->writeMicroseconds(power_right);
+        memcpy(p_power1, &power_left, sizeof(long));
+        memcpy(p_power2, &power_right, sizeof(long));
         #endif
     }
 };
@@ -369,10 +369,11 @@ void getRCControl(){
         y = 0;
     }
 
-    // Does not require rc to initialise
-    static MotorHandler handler;
-    g_motorsInitialised = true;
-    handler.run(m, x, y);
+    g_powerLeft = y + x;
+    g_powerRight = y - x;
+
+    g_powerLeft = g_powerLeft*m/4000 + MOTOR_IDLE;
+    g_powerRight = g_powerRight*m/4000 + MOTOR_IDLE;
 }
 
 void processInputsAndSensors(){
@@ -398,6 +399,11 @@ void processInputsAndSensors(){
     if (IMU.gyroscopeAvailable()){
         IMU.readGyroscope(rx, ry, *p_rz);
     }
+
+    // Run motor
+    static MotorHandler handler;
+    g_motorsInitialised = true;
+    handler.run();
 
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
 }
