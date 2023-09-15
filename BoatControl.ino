@@ -20,10 +20,20 @@ const int MAXCOORDS = 32;
 
 // Bluetooth setup
 BLEStringCharacteristic debugCharacteristic("45c1eda2-4473-42a3-8143-dc79c30a64bf", BLENotify | BLERead, 100);
+BLEUnsignedIntCharacteristic statusCharacteristic("6f04c0a3-f201-4091-a13d-5ecafc3dc54b", BLENotify | BLERead);
 BLECharCharacteristic commandCharacteristic("05c6cc87-7888-4588-b794-92bdf9a29330", BLEWrite);
 BLECharacteristic coordsCharacteristic("3794c841-1b53-4029-aebb-12319386fd28", BLEWrite, 16*MAXCOORDS, true);
 BLECharacteristic telemetryCharacteristic("ccc03716-4f66-4cb8-b6fd-9b2278587add", BLENotify, 100, false);
 
+// Status setup
+enum status_e {
+    GPS_AVAIL   = 1 << 0,
+    RC_AVAIL    = 1 << 1,
+    INITIALISED = 1 << 2,
+};
+volatile uint32_t g_status = 0;
+
+// GPS setup
 TinyGPSPlus gps;
 Uart gpsSerial (&sercom0, GPS_RX, GPS_TX, SERCOM_RX_PAD_1, UART_TX_PAD_0);
 void SERCOM0_Handler(){
@@ -99,6 +109,7 @@ void setup() {
     BLE.setLocalName("Boat");
     BLE.setAdvertisedService(boatService);
     boatService.addCharacteristic(debugCharacteristic);
+    boatService.addCharacteristic(statusCharacteristic);
     boatService.addCharacteristic(commandCharacteristic);
     boatService.addCharacteristic(coordsCharacteristic);
     boatService.addCharacteristic(telemetryCharacteristic);
@@ -158,6 +169,28 @@ void loop() {
             }
         }
     }
+}
+
+void setStatus(uint32_t status) {
+    // Set bit
+    Serial.println("Setting");
+    uint32_t new_status = g_status | status;
+    if (new_status != g_status) {
+        g_status = new_status;
+        statusCharacteristic.writeValue(new_status);
+    }
+    Serial.println("Done");
+}
+
+void unsetStatus(uint32_t status) {
+    // Unset bit
+    Serial.println("Unsetting");
+    uint32_t new_status = g_status & ~status;
+    if (new_status != g_status) {
+        g_status = new_status;
+        statusCharacteristic.writeValue(new_status);
+    }
+    Serial.println("Done unset");
 }
 
 class MotorHandler {
@@ -234,6 +267,7 @@ public:
 
         debugCharacteristic.writeValue("Finished motor init");
         g_motorsInitialised = true;
+        setStatus(INITIALISED);
     }
 
     // Run motors according to global powers
@@ -323,6 +357,7 @@ void processGPS(){
             g_homeLat = gps.location.lat();
             g_homeLng = gps.location.lng();
             g_homeSet = true;
+            debugCharacteristic.writeValue("Home set");
         } else {
             double lat = gps.location.lat();
             double lng = gps.location.lng();
@@ -343,11 +378,9 @@ void processGPS(){
             memcpy(p_lat, &lat, 8);
             memcpy(p_lng, &lng, 8);
         }
+        setStatus(GPS_AVAIL);
     } else {
-        static uint32_t i = 0;
-        if (i++ % 20 == 0) {
-            debugCharacteristic.writeValue("Location not avail");
-        }
+        unsetStatus(GPS_AVAIL);
     }
 }
 
@@ -356,8 +389,6 @@ void getRCControl(){
     int x = 0;
     int y = 0;
     int m = 0;
-
-    static uint8_t timer = 0;
 
     static bool frskyZeroSet = false;
     static float frskyZeroX = 0;
@@ -377,11 +408,9 @@ void getRCControl(){
             frskyZeroSet = true;
             debugCharacteristic.writeValue("RC controller connected");
         }
-        timer = 0;
+        setStatus(RC_AVAIL);
     } else {
-        if (timer++ % 100 == 0) {
-            debugCharacteristic.writeValue("No RC controller connected");
-        }
+        unsetStatus(RC_AVAIL);
     }
 
     // Deadzone
