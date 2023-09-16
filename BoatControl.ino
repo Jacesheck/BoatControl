@@ -84,7 +84,7 @@ long* p_power2 = (long*)   (g_telemOutput + 36);
 float* p_rz    = (float*)  (g_telemOutput + 40);
 
 // Kalman data
-const unsigned int TELEM_SIZE = size
+//const unsigned int KALMAN_SIZE = sizeof(float)*6;
 // TODO: Create bluetooth data for this
 //byte g_kalmanOutput[100];
 //float p_kfX = (float*) (g_kalmanOutput) ;
@@ -316,6 +316,9 @@ public:
         mpRight->writeMicroseconds(power_right);
         memcpy(p_power1, &power_left, sizeof(long));
         memcpy(p_power2, &power_right, sizeof(long));
+
+        // For kalman filter
+        kf.predict((float) power_left, (float) power_right);
         #endif
     }
 };
@@ -441,8 +444,7 @@ void getRCControl(){
     g_powerRight = g_powerRight*m/4000 + MOTOR_IDLE;
 }
 
-void handleKalmanFilter() {
-    kf.predict((float) g_powerLeft, (float) g_powerRight);
+void updateKalmanFilter() {
     sensor_data sensors;
     sensors.gpsX = *p_x;
     sensors.gpsY = *p_y;
@@ -482,7 +484,7 @@ void processInputsAndSensors(){
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
 
     // Kalman filter
-    handleKalmanFilter();
+    updateKalmanFilter();
 
     // TODO: Make motor inputs public 
 }
