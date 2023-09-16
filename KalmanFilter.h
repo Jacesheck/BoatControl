@@ -1,6 +1,7 @@
 #include <BasicLinearAlgebra.h>
 //#include "../../../Arduino/libraries/BasicLinearAlgebra/BasicLinearAlgebra.h"
 #include <algorithm>
+#include <cmath>
 #include <math.h>
 
 using namespace BLA;
@@ -54,8 +55,7 @@ class KalmanFilter {
     float b2 = 3.;
     float mGpsNoise = 2.;
     float mGyroNoise = 0.1;
-    float mMotorForce = 0.1;
-    float mMotorTorque = 50.;
+    float mMotorForce = 0.4;
 
     float dt = 0;
 
@@ -69,6 +69,14 @@ class KalmanFilter {
     
     Matrix<2,1> u; // Input matrix
     Matrix<6,6> I; // Identity matrix
+
+    void printState() {
+        for (int i = 0; i < 6; i++) {
+            Serial.print(x(i));
+            Serial.print(" ");
+        }
+        Serial.println();
+    }
 
     void updateGPS(const sensor_data& sensors) {
         Matrix<4,1> z = {sensors.gpsX,
@@ -93,6 +101,8 @@ class KalmanFilter {
     }
 
     void updateNoGPS(float rz) {
+        if (!isfinite(rz))
+            rz = 0;
         rz = -rz;
         Matrix<1,6> H = {0., 0., 0., 0., 0., 1.};
         Matrix<1,1> R = {mGyroNoise};
@@ -133,15 +143,15 @@ public:
              1., 1.,
              1., 1.,
              0., 0.,
-             mMotorTorque*0.5*dt*mWidth/2, -mMotorTorque*0.5*dt*mWidth/2};
+             mMotorForce*0.5*dt*mWidth/2, -mMotorForce*0.5*dt*mWidth/2};
 
         // Init f
         mF = {1., 0., dt, 0., 0., 0.,
-             0., 1., 0., dt, 0., 0.,
-             0., 0., 0., 1.-dt*b1, 0., 0., 0.,
-             0., 0., 0., 0., 1.-dt*b1, 0., 0.,
-             0., 0., 0., 0., 1., dt,
-             0., 0., 0., 0., 0., 1 - dt*b2};
+              0., 1., 0., dt, 0., 0.,
+              0., 0., (1.-dt*b1), 0., 0., 0.,
+              0., 0., 0., (1.-dt*b1), 0., 0.,
+              0., 0., 0., 0., 1., dt,
+              0., 0., 0., 0., 0., (1. - dt*b2)};
 
         I = {1., 0., 0., 0., 0., 0.,
              0., 1., 0., 0., 0., 0.,
@@ -152,7 +162,7 @@ public:
     }
 
     void predict(float motor1, float motor2) {
-        float theta_r = x(4);
+        float theta_r = x(4) * PI / 180;
 
         B(3, 0) = mMotorForce*dt*sin(theta_r);
         B(3, 1) = mMotorForce*dt*sin(theta_r);
@@ -178,7 +188,13 @@ public:
             sensors.distGPS = sqrt(pow(dx, 2.) + pow(dy, 2.));
             sensors.courseGPS = courseTo(dx, dy);
 
-            updateGPS(sensors);
+            if (!isfinite(sensors.distGPS) ||
+                !isfinite(sensors.courseGPS) ||
+                !isfinite(sensors.gpsX) ||
+                !isfinite(sensors.gpsY))
+                updateNoGPS(sensors.rz);
+            else
+                updateGPS(sensors);
         } else {
             // Old gps data
             updateNoGPS(sensors.rz);
@@ -195,5 +211,11 @@ public:
         x(1) = 0.;
         P(0,0) = mGpsNoise;
         P(1,1) = mGpsNoise;
+    }
+
+    void copyTo(float array[6]) {
+        for (int i = 0; i < 6; i++) {
+            array[i] = x(i);
+        }
     }
 };

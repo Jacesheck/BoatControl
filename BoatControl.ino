@@ -48,10 +48,10 @@ bfs::SbusRx sbus(&Serial1);
 bfs::SbusData data;
 
 // Motor setup
-constexpr int MOTOR_IDLE = 1475;
+constexpr float MOTOR_IDLE = 1475;
 bool g_motorsInitialised = false;
-long g_powerLeft = MOTOR_IDLE;
-long g_powerRight = MOTOR_IDLE;
+float g_powerLeft = 0; // -1..1
+float g_powerRight = 0; // -1..1
 
 // Waypoint data
 int g_numWaypoints = 0;
@@ -84,11 +84,9 @@ long* p_power2 = (long*)   (g_telemOutput + 36);
 float* p_rz    = (float*)  (g_telemOutput + 40);
 
 // Kalman data
-//const unsigned int KALMAN_SIZE = sizeof(float)*6;
+const unsigned int KALMAN_SIZE = sizeof(float)*6;
 // TODO: Create bluetooth data for this
-//byte g_kalmanOutput[100];
-//float p_kfX = (float*) (g_kalmanOutput) ;
-//float p_kfY = (float*) (g_kalmanOutput) ;
+float g_kalmanOutput[6];
 
 // Kalman filter
 KalmanFilter kf(1. / (float) EVENT_PERIOD);
@@ -126,6 +124,7 @@ void setup() {
     boatService.addCharacteristic(commandCharacteristic);
     boatService.addCharacteristic(coordsCharacteristic);
     boatService.addCharacteristic(telemetryCharacteristic);
+    boatService.addCharacteristic(kalmanCharacteristic);
     BLE.addService(boatService);
 
     BLE.advertise();
@@ -186,24 +185,20 @@ void loop() {
 
 void setStatus(uint32_t status) {
     // Set bit
-    Serial.println("Setting");
     uint32_t new_status = g_status | status;
     if (new_status != g_status) {
         g_status = new_status;
         statusCharacteristic.writeValue(new_status);
     }
-    Serial.println("Done");
 }
 
 void unsetStatus(uint32_t status) {
     // Unset bit
-    Serial.println("Unsetting");
     uint32_t new_status = g_status & ~status;
     if (new_status != g_status) {
         g_status = new_status;
         statusCharacteristic.writeValue(new_status);
     }
-    Serial.println("Done unset");
 }
 
 class MotorHandler {
@@ -281,24 +276,28 @@ public:
         debugCharacteristic.writeValue("Finished motor init");
         g_motorsInitialised = true;
         setStatus(INITIALISED);
+        kf.setHome();
     }
 
     // Run motors according to global powers
     void run() {
         // Copy from global
-        long power_left = g_powerLeft;
-        long power_right = g_powerRight;
+        long power_left  = (long) (g_powerLeft * 400.); // -400..400
+        long power_right = (long) (g_powerRight * 400.); // -400..400
 
         // Swap motor direction if needed
         if(mLeftReversed){
-            power_left = (2 * MOTOR_IDLE) - power_left;
+            power_left *= -1;
         }
         if(mRightReversed){
-            power_right = (2 * MOTOR_IDLE) - power_right;
+            power_right *= -1;
         }
 
-        power_left = constrain(power_left, 1100, 1900);
-        power_right = constrain(power_right, 1100, 1900);
+        power_left = constrain(power_left, -400l, 400l);
+        power_right = constrain(power_right, -400l, 400l);
+
+        power_left += MOTOR_IDLE;
+        power_right += MOTOR_IDLE;
 
         #if(MOTOR_TEST)
         Serial.print("Left Motor: ");
@@ -317,8 +316,6 @@ public:
         memcpy(p_power1, &power_left, sizeof(long));
         memcpy(p_power2, &power_right, sizeof(long));
 
-        // For kalman filter
-        kf.predict((float) power_left, (float) power_right);
         #endif
     }
 };
@@ -402,21 +399,33 @@ void processGPS(){
 
 // Runs motors according to rc controller
 void getRCControl(){
-    int x = 0;
-    int y = 0;
-    int m = 0;
+    float x = 0;
+    float y = 0;
+    float m = 0;
 
     static bool frskyZeroSet = false;
-    static float frskyZeroX = 0;
-    static float frskyZeroY = 0;
+    static int frskyZeroX = 0;
+    static int frskyZeroY = 0;
 
     if (sbus.Read()){
         data = sbus.data();
-        if (frskyZeroSet){
-            x = data.ch[1] - frskyZeroX;
-            y = data.ch[2] - frskyZeroY;
+        
+        // Check frame loss
+        if (data.lost_frame)
+            unsetStatus(RC_AVAIL);
+        else
+            setStatus(RC_AVAIL);
 
-            m = data.ch[4];
+        if (data.failsafe) {
+            g_powerLeft = 0;
+            g_powerRight = 0;
+        }
+
+        if (frskyZeroSet){
+            x = data.ch[1] - frskyZeroX; // -800..800
+            y = data.ch[2] - frskyZeroY; // -800..800
+
+            m = data.ch[4]; // 0..1800
         } else {
             // First time connection
             frskyZeroX = data.ch[1];
@@ -424,9 +433,8 @@ void getRCControl(){
             frskyZeroSet = true;
             debugCharacteristic.writeValue("RC controller connected");
         }
-        setStatus(RC_AVAIL);
     } else {
-        unsetStatus(RC_AVAIL);
+        return; // Not ready
     }
 
     // Deadzone
@@ -437,19 +445,22 @@ void getRCControl(){
         y = 0;
     }
 
-    g_powerLeft = y + x;
-    g_powerRight = y - x;
+    g_powerLeft = y + x; // -1600..1600
+    g_powerRight = y - x; // -1600..1600
 
-    g_powerLeft = g_powerLeft*m/4000 + MOTOR_IDLE;
-    g_powerRight = g_powerRight*m/4000 + MOTOR_IDLE;
+    g_powerLeft = g_powerLeft*m/ 1280000.; // -1..1
+    g_powerRight = g_powerRight*m/ 128000.; // -1..1
 }
 
 void updateKalmanFilter() {
+    kf.predict(g_powerLeft, g_powerRight);
     sensor_data sensors;
     sensors.gpsX = *p_x;
     sensors.gpsY = *p_y;
     sensors.rz = *p_rz;
     kf.update(sensors);
+    kf.copyTo(g_kalmanOutput);
+    kalmanCharacteristic.writeValue(g_kalmanOutput, KALMAN_SIZE);
 }
 
 void processInputsAndSensors(){
