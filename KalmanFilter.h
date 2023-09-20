@@ -55,20 +55,20 @@ class KalmanFilter {
     float b2 = 3.;
     float mGpsNoise = 2.;
     float mGyroNoise = 0.1;
-    float mMotorForce = 0.4;
+    float mMotorForce = 0.001;
 
     float dt = 0;
 
     float mWidth = 0.8; // Width of boat (m)
 
-    Matrix<6,1> x; // State space matrix
-    Matrix<6,6> P; // Initial uncertainty matrix
-    Matrix<6,6> Q; // Process uncertainty matrix
-    Matrix<6,2> B; // Input translation matrix
-    Matrix<6,6> mF; // Transition matrix (model)
+    Matrix<6,1> x{}; // State space matrix
+    Matrix<6,6> P{}; // Initial uncertainty matrix
+    Matrix<6,6> Q{}; // Process uncertainty matrix
+    Matrix<6,2> B{}; // Input translation matrix
+    Matrix<6,6> mF{}; // Transition matrix (model)
     
-    Matrix<2,1> u; // Input matrix
-    Matrix<6,6> I; // Identity matrix
+    Matrix<2,1> u{}; // Input matrix
+    Matrix<6,6> I{}; // Identity matrix
 
     void printState() {
         for (int i = 0; i < 6; i++) {
@@ -89,9 +89,10 @@ class KalmanFilter {
                          0., 0., 0., 0., 0., 1.};
         Matrix<4,4> R = {mGpsNoise, 0., 0., 0.,
                          0., mGpsNoise, 0., 0.,
-                         0., 0., mGpsNoise/sensors.distGPS, 0.,
+                         0., 0., 1e9, 0.,
                          0., 0., 0., mGyroNoise};
-
+        if (sensors.distGPS > 1.)
+            R(2, 2) = 20*mGpsNoise/pow(sensors.distGPS - 1, 2);
         Matrix<4,1> y = z - H*x;
         Matrix<4,4> S = H*P*~H + R;
         Matrix<6,4> K = P*~H*Inverse(S);
@@ -121,7 +122,7 @@ public:
 
         // Init P
         P.Fill(0);
-        P(0,0) = 30.; // x
+        P(0,0) = 30.; // x 
         P(1,1) = 30.; // y
         P(2,2) = 5.; // dx
         P(3,3) = 5.; // dy
@@ -134,7 +135,7 @@ public:
         Q(1,1) = 0.5;
         Q(2,2) = 5.0;
         Q(3,3) = 5.0;
-        Q(4,4) = 1.0;
+        Q(4,4) = 0.5;
         Q(5,5) = 2.0;
 
         // Init B
@@ -172,6 +173,9 @@ public:
         u(0) = motor1;
         u(1) = motor2;
 
+        Serial.print("Procees uncert: ");
+        Serial.println(P(4, 4));
+
         // Predict step
         x = mF*x + B*u;
         P = mF*P*~mF + Q;
@@ -204,6 +208,8 @@ public:
 
         lastX = sensors.gpsX;
         lastY = sensors.gpsY;
+
+        printState();
     }
 
     void setHome() {

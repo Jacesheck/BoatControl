@@ -50,8 +50,6 @@ bfs::SbusData data;
 // Motor setup
 constexpr float MOTOR_IDLE = 1475;
 bool g_motorsInitialised = false;
-float g_powerLeft = 0; // -1..1
-float g_powerRight = 0; // -1..1
 
 // Waypoint data
 int g_numWaypoints = 0;
@@ -73,23 +71,22 @@ bool g_manualControl = true;
 float rx, ry;
 
 // Telemetry data
-const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(long)*2 + sizeof(float);
-byte g_telemOutput[100];
-double* p_x    = (double*) (g_telemOutput);
-double* p_y    = (double*) (g_telemOutput + 8);
-double* p_lat  = (double*) (g_telemOutput + 16);
-double* p_lng  = (double*) (g_telemOutput + 24);
-long* p_power1 = (long*)   (g_telemOutput + 32);
-long* p_power2 = (long*)   (g_telemOutput + 36);
-float* p_rz    = (float*)  (g_telemOutput + 40);
+const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(float)*3;
+byte g_telemOutput[TELEM_SIZE];
+double* p_x          = (double*) (g_telemOutput);
+double* p_y          = (double*) (g_telemOutput + 8);
+double* p_lat        = (double*) (g_telemOutput + 16);
+double* p_lng        = (double*) (g_telemOutput + 24);
+float*  p_powerLeft  = (float*)  (g_telemOutput + 32); // -1..1
+float*  p_powerRight = (float*)  (g_telemOutput + 36); // -1..1
+float*  p_rz         = (float*)  (g_telemOutput + 40);
 
 // Kalman data
 const unsigned int KALMAN_SIZE = sizeof(float)*6;
-// TODO: Create bluetooth data for this
 float g_kalmanOutput[6];
 
 // Kalman filter
-KalmanFilter kf(1. / (float) EVENT_PERIOD);
+KalmanFilter kf(((float) EVENT_PERIOD) / 1000);
 
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
@@ -181,6 +178,11 @@ void loop() {
             }
         }
     }
+}
+
+float mapfloat(float x, float in_min, float in_max, float out_min, float out_max)
+{
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 void setStatus(uint32_t status) {
@@ -282,8 +284,8 @@ public:
     // Run motors according to global powers
     void run() {
         // Copy from global
-        long power_left  = (long) (g_powerLeft * 400.); // -400..400
-        long power_right = (long) (g_powerRight * 400.); // -400..400
+        long power_left  = (long) (*p_powerLeft * 400.); // -400..400
+        long power_right = (long) (*p_powerRight * 400.); // -400..400
 
         // Swap motor direction if needed
         if(mLeftReversed){
@@ -313,9 +315,6 @@ public:
         #else
         mpLeft->writeMicroseconds(power_left);
         mpRight->writeMicroseconds(power_right);
-        memcpy(p_power1, &power_left, sizeof(long));
-        memcpy(p_power2, &power_right, sizeof(long));
-
         #endif
     }
 };
@@ -417,8 +416,8 @@ void getRCControl(){
             setStatus(RC_AVAIL);
 
         if (data.failsafe) {
-            g_powerLeft = 0;
-            g_powerRight = 0;
+            *p_powerLeft = 0;
+            *p_powerRight = 0;
         }
 
         if (frskyZeroSet){
@@ -445,15 +444,15 @@ void getRCControl(){
         y = 0;
     }
 
-    g_powerLeft = y + x; // -1600..1600
-    g_powerRight = y - x; // -1600..1600
+    float power_left  = mapfloat((y + x)*m, -1600.*1800., 1600.*1800., -1., 1.);
+    float power_right = mapfloat((y - x)*m, -1600.*1800., 1600.*1800., -1., 1.);
 
-    g_powerLeft = g_powerLeft*m/ 1280000.; // -1..1
-    g_powerRight = g_powerRight*m/ 128000.; // -1..1
+    *p_powerLeft = constrain(power_left, -1, 1);
+    *p_powerRight = constrain(power_right, -1, 1);
 }
 
 void updateKalmanFilter() {
-    kf.predict(g_powerLeft, g_powerRight);
+    kf.predict(*p_powerLeft, *p_powerRight);
     sensor_data sensors;
     sensors.gpsX = *p_x;
     sensors.gpsY = *p_y;
@@ -496,6 +495,4 @@ void processInputsAndSensors(){
 
     // Kalman filter
     updateKalmanFilter();
-
-    // TODO: Make motor inputs public 
 }
