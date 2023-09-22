@@ -121,6 +121,25 @@ public:
 
 Status g_status{};
 
+class PID {
+    float mP;
+    float mI;
+    float mD;
+    float dt = ((float) EVENT_PERIOD) / 1000.;
+    float prev_e;
+    
+public:
+    PID(float p, float i, float d) : mP(p), mI(i), mD(d) {}
+
+    float run(float setpoint, float observation, bool reset = false) {
+        float e = setpoint - observation;
+        float de = reset ? 0 : (e - this->prev_e);
+        this->prev_e = e;
+
+        return mP * e + mD * de / dt; // I control not needed
+    }
+};
+
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
 
@@ -344,6 +363,8 @@ void processCommand(){
             break;
         case 'm':
             g_status.toggleStatus(RC_MODE);
+            *p_powerLeft = 0;
+            *p_powerRight = 0;
             break;
         default :
             debugCharacteristic.writeValue("Something else");
@@ -495,6 +516,12 @@ void processInputsAndSensors(){
 
     if (g_status.getStatus(RC_MODE)){
         getRCControl();
+    } else {
+        static PID pid(0.1, 0.001, 0);
+        float power = pid.run(180, g_kalmanOutput[4]);
+        power = constrain(power, -1, 1);
+        *p_powerLeft = power;
+        *p_powerRight = -power;
     }
 
     if (IMU.gyroscopeAvailable()){
