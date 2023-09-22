@@ -132,8 +132,8 @@ public:
     PID(float p, float i, float d) : mP(p), mI(i), mD(d) {}
 
     float run(float setpoint, float observation, bool reset = false) {
-        float e = setpoint - observation;
-        float de = reset ? 0 : (e - this->prev_e);
+        float e = wrap180(setpoint - observation);
+        float de = reset ? 0 : (wrap180(e - this->prev_e));
         this->prev_e = e;
 
         return mP * e + mD * de / dt; // I control not needed
@@ -182,17 +182,17 @@ void setup() {
 
     Serial.println("Starting up");
 
-    // Will block for bluetooth
-    BLEDevice central = BLE.central();
-    Serial.println("Waiting for central");
-    while (!central) { central = BLE.central(); } // Wait for bluetooth
-    Serial.println("Connected");
-    while (!commandCharacteristic.written()){
-        central.connected();
-        debugCharacteristic.writeValue("Waiting for char...");
-        delay(100);
-    } // Wait for write
-    commandCharacteristic.value(); // Throw away value
+    // Will block for bluetooth (Useful for debugging)
+    //BLEDevice central = BLE.central();
+    //Serial.println("Waiting for central");
+    //while (!central) { central = BLE.central(); } // Wait for bluetooth
+    //Serial.println("Connected");
+    //while (!commandCharacteristic.written()){
+    //    central.connected();
+    //    debugCharacteristic.writeValue("Waiting for char...");
+    //    delay(100);
+    //} // Wait for write
+    //commandCharacteristic.value(); // Throw away value
 }
 
 void loop() {
