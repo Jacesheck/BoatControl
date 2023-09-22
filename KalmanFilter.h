@@ -215,6 +215,7 @@ public:
     void setHome() {
         x(0) = 0.;
         x(1) = 0.;
+        x(4) = 0.; // Set to north
         P(0,0) = mGpsNoise;
         P(1,1) = mGpsNoise;
     }

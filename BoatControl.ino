@@ -33,8 +33,8 @@ enum status_e {
     GPS_AVAIL   = 1 << 0,
     RC_AVAIL    = 1 << 1,
     INITIALISED = 1 << 2,
+    RC_MODE     = 1 << 3, // Manual rc control
 };
-volatile uint32_t g_status = 0;
 
 // GPS setup
 TinyGPSPlus gps;
@@ -64,9 +64,6 @@ double g_homeLng;
 // Frsky Control
 const int DEADZONE = 100;
 
-// Will do rc control
-bool g_manualControl = true;
-
 // IMU data (not used)
 float rx, ry;
 
@@ -87,6 +84,42 @@ float g_kalmanOutput[6];
 
 // Kalman filter
 KalmanFilter kf(((float) EVENT_PERIOD) / 1000);
+
+class Status {
+    uint32_t mStatus = RC_MODE;
+
+    void updateState(uint32_t newStatus) {
+        if (newStatus != mStatus) {
+            mStatus = newStatus;
+            statusCharacteristic.writeValue(newStatus);
+        }
+    }
+
+public:
+    void setStatus(uint32_t status) {
+        // Set bit
+        uint32_t new_status = mStatus | status;
+        updateState(new_status);
+    }
+
+    void unsetStatus(uint32_t status) {
+        // Unset bit
+        uint32_t new_status = mStatus & ~status;
+        updateState(new_status);
+    }
+
+    void toggleStatus(uint32_t status) {
+        // Toggle bit
+        uint32_t new_status = mStatus ^ status;
+        updateState(new_status);
+    }
+
+    bool getStatus(uint32_t status) {
+        return status & mStatus;
+    }
+};
+
+Status g_status{};
 
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
@@ -169,7 +202,7 @@ void loop() {
     // done through bluetooth
     // (Subject to change)
     if (g_motorsInitialised) {
-        if (g_manualControl){
+        if (g_status.getStatus(RC_MODE)){
             unsigned long currentMillis = millis();
             unsigned long dt = currentMillis - prevMillis;
             if (dt > EVENT_PERIOD){
@@ -183,24 +216,6 @@ void loop() {
 float mapfloat(float x, float in_min, float in_max, float out_min, float out_max)
 {
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
-void setStatus(uint32_t status) {
-    // Set bit
-    uint32_t new_status = g_status | status;
-    if (new_status != g_status) {
-        g_status = new_status;
-        statusCharacteristic.writeValue(new_status);
-    }
-}
-
-void unsetStatus(uint32_t status) {
-    // Unset bit
-    uint32_t new_status = g_status & ~status;
-    if (new_status != g_status) {
-        g_status = new_status;
-        statusCharacteristic.writeValue(new_status);
-    }
 }
 
 class MotorHandler {
@@ -277,7 +292,7 @@ public:
 
         debugCharacteristic.writeValue("Finished motor init");
         g_motorsInitialised = true;
-        setStatus(INITIALISED);
+        g_status.setStatus(INITIALISED);
         kf.setHome();
     }
 
@@ -322,14 +337,13 @@ public:
 void processCommand(){
     char cmd = commandCharacteristic.value();
     switch(cmd){
-        //case 'i':
-            //debugCharacteristic.writeValue("Initialising motors");
-            //g_initialiseMotors = true;
-            //g_startInitMotorTime = millis();
-            //break;
         case 'h':
             debugCharacteristic.writeValue("Home reset");
             g_homeSet = false;
+            kf.setHome();
+            break;
+        case 'm':
+            g_status.toggleStatus(RC_MODE);
             break;
         default :
             debugCharacteristic.writeValue("Something else");
@@ -390,9 +404,9 @@ void processGPS(){
             memcpy(p_lat, &lat, 8);
             memcpy(p_lng, &lng, 8);
         }
-        setStatus(GPS_AVAIL);
+        g_status.setStatus(GPS_AVAIL);
     } else {
-        unsetStatus(GPS_AVAIL);
+        g_status.unsetStatus(GPS_AVAIL);
     }
 }
 
@@ -411,9 +425,9 @@ void getRCControl(){
         
         // Check frame loss
         if (data.lost_frame)
-            unsetStatus(RC_AVAIL);
+            g_status.unsetStatus(RC_AVAIL);
         else
-            setStatus(RC_AVAIL);
+            g_status.setStatus(RC_AVAIL);
 
         if (data.failsafe) {
             *p_powerLeft = 0;
@@ -479,7 +493,7 @@ void processInputsAndSensors(){
         }
     }
 
-    if (g_manualControl){
+    if (g_status.getStatus(RC_MODE)){
         getRCControl();
     }
 
