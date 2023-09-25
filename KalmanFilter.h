@@ -55,9 +55,10 @@ class KalmanFilter {
     float b2 = 3.;
     float mGpsNoise = 2.;
     float mGyroNoise = 0.1;
-    float mMotorForce = 0.001;
+    float mMotorForce = 0.4;
+    float mMotorTorque = 5;
 
-    float dt = 0;
+    float dt;
 
     float mWidth = 0.8; // Width of boat (m)
 
@@ -144,7 +145,7 @@ public:
              1., 1.,
              1., 1.,
              0., 0.,
-             mMotorForce*0.5*dt*mWidth/2, -mMotorForce*0.5*dt*mWidth/2};
+             mMotorTorque, -mMotorTorque};
 
         // Init f
         mF = {1., 0., dt, 0., 0., 0.,
@@ -165,20 +166,53 @@ public:
     void predict(float motor1, float motor2) {
         float theta_r = x(4) * PI / 180;
 
-        B(3, 0) = mMotorForce*dt*sin(theta_r);
-        B(3, 1) = mMotorForce*dt*sin(theta_r);
-        B(4, 0) = mMotorForce*dt*cos(theta_r);
-        B(4, 1) = mMotorForce*dt*cos(theta_r);
+        Serial.print("Theta_r: ");
+        Serial.println(theta_r);
+        B(2, 0) = mMotorForce*dt*sin(theta_r);
+        B(2, 1) = mMotorForce*dt*sin(theta_r);
+        B(3, 0) = mMotorForce*dt*cos(theta_r);
+        B(3, 1) = mMotorForce*dt*cos(theta_r);
+        Serial.println("Motor output: ");
+        Serial.println(mMotorForce*dt*sin(theta_r));
+        Serial.println(mMotorForce*dt*cos(theta_r));
 
         u(0) = motor1;
         u(1) = motor2;
+        Serial.print("Motor input: ");
+        Serial.print(motor1);
+        Serial.print(" ");
+        Serial.println(motor2);
 
-        Serial.print("Procees uncert: ");
+        Serial.print("Process uncert: ");
         Serial.println(P(4, 4));
+        
+        Serial.print("x:");
+        for (int i = 0; i < 6; i++) {
+            Serial.print(x(i));
+            Serial.print(" ");
+        }
+        Serial.println();
+
+        Serial.print("B:\n");
+        for (int i = 0; i < 6; i++) {
+            for (int j = 0; j < 2; j++) {
+                Serial.print(B(i, j));
+                Serial.print(" ");
+            }
+            Serial.println();
+        }
 
         // Predict step
         x = mF*x + B*u;
         P = mF*P*~mF + Q;
+
+        Serial.print("x:");
+        for (int i = 0; i < 6; i++) {
+            Serial.print(x(i));
+            Serial.print(" ");
+        }
+        Serial.println();
+
     }
 
     void update(sensor_data& sensors) {

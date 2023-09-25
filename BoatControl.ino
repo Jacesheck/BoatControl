@@ -12,6 +12,7 @@
 #define MOTOR1 7
 #define MOTOR2 8
 #define MOTOR_TEST false
+#define MOTOR_IDLE 1475
 
 #define EVENT_PERIOD 100
 
@@ -46,10 +47,6 @@ void SERCOM0_Handler(){
 // Frsky setup
 bfs::SbusRx sbus(&Serial1);
 bfs::SbusData data;
-
-// Motor setup
-constexpr float MOTOR_IDLE = 1475;
-bool g_motorsInitialised = false;
 
 // Waypoint data
 int g_numWaypoints = 0;
@@ -121,6 +118,123 @@ public:
 
 Status g_status{};
 
+class MotorHandler {
+    Servo* mpLeft = nullptr;
+    Servo* mpRight = nullptr;
+
+    bool mLeftReversed = false;
+    bool mRightReversed = false;
+
+    // Ramp up motor until input is sent over bluetooth
+    void rampMotor(Servo* motor) {
+        BLEDevice central = BLE.central();
+        long power = MOTOR_IDLE;
+        while (!commandCharacteristic.written()) {
+            power += 8;
+            if (power > 1900)
+                power = 1900;
+            motor->writeMicroseconds(power);
+            central.connected();
+            delay(100); 
+        }
+        motor->writeMicroseconds(MOTOR_IDLE);
+    }
+
+    // Initialises motors
+    void init() {
+        Servo* firstMotor = new Servo;
+        Servo* secondMotor = new Servo;
+        firstMotor->attach(MOTOR1);
+        secondMotor->attach(MOTOR2);
+        firstMotor->writeMicroseconds(MOTOR_IDLE);
+        secondMotor->writeMicroseconds(MOTOR_IDLE);
+
+        // Motor initialisation (waits for another input)
+        debugCharacteristic.writeValue("Waiting for motor init");
+        BLEDevice central = BLE.central();
+        while(!commandCharacteristic.written()) {
+            central.connected();
+            delay(100);
+        }
+        commandCharacteristic.value();
+        Serial.println("Starting motor init");
+
+        // Find which is left/right motors
+        debugCharacteristic.writeValue("Which motor is runnig (l, r)");
+        rampMotor(firstMotor);
+        if (commandCharacteristic.value() == 'l') {
+            mpLeft = firstMotor;
+            mpRight = secondMotor;
+        } else {
+            mpRight = firstMotor;
+            mpLeft = secondMotor;
+        }
+
+        // Test left motor reversed
+        debugCharacteristic.writeValue("Running left (f, b)");
+        rampMotor(mpLeft);
+        if (commandCharacteristic.value() == 'b') {
+            debugCharacteristic.writeValue("Reversing left");
+            mLeftReversed = true;
+        }
+
+        // Test right motor reversed
+        debugCharacteristic.writeValue("Running right (f, b)");
+        rampMotor(mpRight);
+        if (commandCharacteristic.value() == 'b') {
+            debugCharacteristic.writeValue("Reversing right");
+            mRightReversed = true;
+        }
+
+        debugCharacteristic.writeValue("Finished motor init");
+        g_status.setStatus(INITIALISED);
+        kf.setHome();
+    }
+
+public:
+    // Run motors according to global powers
+    void run() {
+        if (!g_status.getStatus(INITIALISED)) {
+            this->init();
+        }
+        // Copy from global
+        long power_left  = (long) (*p_powerLeft * 400.); // -400..400
+        long power_right = (long) (*p_powerRight * 400.); // -400..400
+
+        // Swap motor direction if needed
+        if(mLeftReversed){
+            power_left *= -1;
+        }
+        if(mRightReversed){
+            power_right *= -1;
+        }
+
+        power_left = constrain(power_left, -400l, 400l);
+        power_right = constrain(power_right, -400l, 400l);
+
+        power_left += MOTOR_IDLE;
+        power_right += MOTOR_IDLE;
+
+        #if(MOTOR_TEST)
+        Serial.print("Left Motor: ");
+        Serial.print(power_left);
+        Serial.print(", Right Motor: ");
+        Serial.println(power_right);
+
+        Serial.print("Left reversed: ");
+        Serial.print(mLeftReversed);
+        Serial.print(", Right reversed: ");
+        Serial.println(mRightReversed);
+        delay(100);
+        #else
+        mpLeft->writeMicroseconds(power_left);
+        mpRight->writeMicroseconds(power_right);
+        #endif
+    }
+};
+
+MotorHandler g_motorHandler;
+
 class PID {
     float mP;
     float mI;
@@ -178,8 +292,6 @@ void setup() {
 
     BLE.advertise();
 
-    delay(2000);
-
     Serial.println("Starting up");
 
     // Will block for bluetooth (Useful for debugging)
@@ -214,19 +326,18 @@ void loop() {
         }
 
         digitalWrite(LED_BUILTIN, LOW);
-    }
-
-    // Only allow exclusive rc control once motors are Initialised
-    // This is because the motor initialisation is currently
-    // done through bluetooth
-    // (Subject to change)
-    if (g_motorsInitialised) {
+    } else if (g_status.getStatus(INITIALISED)) {
+        // Only allow exclusive rc control once motors are Initialised
+        // This is because the motor initialisation is currently
+        // done through bluetooth
+        // (Subject to change)
         if (g_status.getStatus(RC_MODE)){
             unsigned long currentMillis = millis();
             unsigned long dt = currentMillis - prevMillis;
             if (dt > EVENT_PERIOD){
                 getRCControl();
                 prevMillis = currentMillis;
+                g_motorHandler.run();
             }
         }
     }
@@ -236,122 +347,6 @@ float mapfloat(float x, float in_min, float in_max, float out_min, float out_max
 {
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
-
-class MotorHandler {
-    Servo* mpLeft = nullptr;
-    Servo* mpRight = nullptr;
-
-    bool mLeftReversed = false;
-    bool mRightReversed = false;
-
-    // Ramp up motor until input is sent over bluetooth
-    void rampMotor(Servo* motor) {
-        BLEDevice central = BLE.central();
-        long power = MOTOR_IDLE;
-        while (!commandCharacteristic.written()) {
-            power += 8;
-            if (power > 1900)
-                power = 1900;
-            motor->writeMicroseconds(power);
-            central.connected();
-            delay(100); 
-        }
-        motor->writeMicroseconds(MOTOR_IDLE);
-    }
-
-public:
-    // Initialises motors
-    MotorHandler() {
-        Servo* firstMotor = new Servo;
-        Servo* secondMotor = new Servo;
-        firstMotor->attach(MOTOR1);
-        secondMotor->attach(MOTOR2);
-        firstMotor->writeMicroseconds(MOTOR_IDLE);
-        secondMotor->writeMicroseconds(MOTOR_IDLE);
-
-        // Motor initialisation (waits for another input)
-        debugCharacteristic.writeValue("Waiting for motor init");
-        BLEDevice central = BLE.central();
-        while(!commandCharacteristic.written()) {
-            central.connected();
-            delay(100);
-        }
-        commandCharacteristic.value();
-        Serial.println("Starting motor init");
-
-        // Find which is left/right motors
-        Serial.println("Sending debug");
-        debugCharacteristic.writeValue("Which motor is runnig (l, r)");
-        Serial.println("Sent debug");
-        rampMotor(firstMotor);
-        Serial.println("Got response");
-        if (commandCharacteristic.value() == 'l') {
-            mpLeft = firstMotor;
-            mpRight = secondMotor;
-        } else {
-            mpRight = firstMotor;
-            mpLeft = secondMotor;
-        }
-
-        // Test left motor reversed
-        debugCharacteristic.writeValue("Running left (f, b)");
-        rampMotor(mpLeft);
-        if (commandCharacteristic.value() == 'b') {
-            debugCharacteristic.writeValue("Reversing left");
-            mLeftReversed = true;
-        }
-
-        // Test right motor reversed
-        debugCharacteristic.writeValue("Running right (f, b)");
-        rampMotor(mpRight);
-        if (commandCharacteristic.value() == 'b') {
-            debugCharacteristic.writeValue("Reversing right");
-            mRightReversed = true;
-        }
-
-        debugCharacteristic.writeValue("Finished motor init");
-        g_motorsInitialised = true;
-        g_status.setStatus(INITIALISED);
-        kf.setHome();
-    }
-
-    // Run motors according to global powers
-    void run() {
-        // Copy from global
-        long power_left  = (long) (*p_powerLeft * 400.); // -400..400
-        long power_right = (long) (*p_powerRight * 400.); // -400..400
-
-        // Swap motor direction if needed
-        if(mLeftReversed){
-            power_left *= -1;
-        }
-        if(mRightReversed){
-            power_right *= -1;
-        }
-
-        power_left = constrain(power_left, -400l, 400l);
-        power_right = constrain(power_right, -400l, 400l);
-
-        power_left += MOTOR_IDLE;
-        power_right += MOTOR_IDLE;
-
-        #if(MOTOR_TEST)
-        Serial.print("Left Motor: ");
-        Serial.print(power_left);
-        Serial.print(", Right Motor: ");
-        Serial.println(power_right);
-
-        Serial.print("Left reversed: ");
-        Serial.print(mLeftReversed);
-        Serial.print(", Right reversed: ");
-        Serial.println(mRightReversed);
-        delay(100);
-        #else
-        mpLeft->writeMicroseconds(power_left);
-        mpRight->writeMicroseconds(power_right);
-        #endif
-    }
-};
 
 void processCommand(){
     char cmd = commandCharacteristic.value();
@@ -482,7 +477,7 @@ void getRCControl(){
     float power_left  = mapfloat((y + x)*m, -1600.*1800., 1600.*1800., -1., 1.);
     float power_right = mapfloat((y - x)*m, -1600.*1800., 1600.*1800., -1., 1.);
 
-    *p_powerLeft = constrain(power_left, -1, 1);
+    *p_powerLeft  = constrain(power_left, -1, 1);
     *p_powerRight = constrain(power_right, -1, 1);
 }
 
@@ -525,12 +520,15 @@ void processInputsAndSensors(){
     }
 
     if (IMU.gyroscopeAvailable()){
-        IMU.readGyroscope(rx, ry, *p_rz);
+        float rz;
+        IMU.readGyroscope(rx, ry, rz);
+        static const float drift = rz;
+        rz -= drift;
+        *p_rz = rz;
     }
 
     // Run motor
-    static MotorHandler handler;
-    handler.run();
+    g_motorHandler.run();
 
     telemetryCharacteristic.writeValue((byte*) g_telemOutput, TELEM_SIZE);
 
