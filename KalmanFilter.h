@@ -56,7 +56,7 @@ class KalmanFilter {
     float mGpsNoise = 2.;
     float mGyroNoise = 0.1;
     float mMotorForce = 0.4;
-    float mMotorTorque = 5;
+    float mMotorTorque = 50;
 
     float dt;
 
@@ -86,14 +86,15 @@ class KalmanFilter {
                          sensors.rz};
         Matrix<4,6> H = {1., 0., 0., 0., 0., 0.,
                          0., 1., 0., 0., 0., 0.,
-                         0., 0., 0., 0., 1., 0.,
+                         0., 0., 0., 0., 0., 0.,
                          0., 0., 0., 0., 0., 1.};
+        if (sensors.distGPS > mGpsNoise)
+            H(2, 4) = 1.;
         Matrix<4,4> R = {mGpsNoise, 0., 0., 0.,
                          0., mGpsNoise, 0., 0.,
-                         0., 0., 1e9, 0.,
+                         0., 0., 1., 0.,
                          0., 0., 0., mGyroNoise};
-        if (sensors.distGPS > 1.)
-            R(2, 2) = 20*mGpsNoise/pow(sensors.distGPS - 1, 2);
+        R(2, 2) = 20*mGpsNoise/pow(sensors.distGPS - 1, 2);
         Matrix<4,1> y = z - H*x;
         Matrix<4,4> S = H*P*~H + R;
         Matrix<6,4> K = P*~H*Inverse(S);
@@ -105,7 +106,6 @@ class KalmanFilter {
     void updateNoGPS(float rz) {
         if (!isfinite(rz))
             rz = 0;
-        rz = -rz;
         Matrix<1,6> H = {0., 0., 0., 0., 0., 1.};
         Matrix<1,1> R = {mGyroNoise};
         Matrix<1,1> z = {rz};
@@ -145,7 +145,7 @@ public:
              1., 1.,
              1., 1.,
              0., 0.,
-             mMotorTorque, -mMotorTorque};
+             mMotorTorque*dt, -mMotorTorque*dt};
 
         // Init f
         mF = {1., 0., dt, 0., 0., 0.,
@@ -218,6 +218,7 @@ public:
     void update(sensor_data& sensors) {
         static float lastX = 0.;
         static float lastY = 0.;
+        sensors.rz = -sensors.rz;
         if (sensors.gpsX != lastX ||
             sensors.gpsY != lastY) {
             // New gps data

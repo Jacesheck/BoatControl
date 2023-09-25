@@ -512,7 +512,7 @@ void processInputsAndSensors(){
     if (g_status.getStatus(RC_MODE)){
         getRCControl();
     } else {
-        static PID pid(0.1, 0.001, 0);
+        static PID pid(0.05, 0., 0.03);
         float power = pid.run(180, g_kalmanOutput[4]);
         power = constrain(power, -1, 1);
         *p_powerLeft = power;
@@ -524,6 +524,7 @@ void processInputsAndSensors(){
         IMU.readGyroscope(rx, ry, rz);
         static const float drift = rz;
         rz -= drift;
+        rz *= 360. / 300.; // From callibration
         *p_rz = rz;
     }
 
