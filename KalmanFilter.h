@@ -42,6 +42,8 @@ static float wrap360(float angle) {
 static float wrap180(float angle) {
     if (angle > 180.)
         angle -= 360;
+    else if (angle < -180.)
+        angle += 360;
     return angle;
 }
 
