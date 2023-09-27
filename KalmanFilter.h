@@ -53,12 +53,13 @@ static float courseTo(float dx, float dy) {
 }
 
 class KalmanFilter {
-    float b1 = 2.;
+    float b1 = 0.8;
     float b2 = 3.;
-    float mGpsNoise = 2.;
+    float mGpsNoise = 4.;
+    float mGpsAngleNoise = 10;
     float mGyroNoise = 0.1;
-    float mMotorForce = 0.4;
-    float mMotorTorque = 50;
+    float mMotorForce = 0.6;
+    float mMotorTorque = 100;
 
     float dt;
 
@@ -96,7 +97,7 @@ class KalmanFilter {
                          0., mGpsNoise, 0., 0.,
                          0., 0., 1., 0.,
                          0., 0., 0., mGyroNoise};
-        R(2, 2) = 20*mGpsNoise/pow(sensors.distGPS - 1, 2);
+        R(2, 2) = fmax(0., mGpsAngleNoise*(0.5 - sensors.distGPS));
         Matrix<4,1> y = z - H*x;
         Matrix<4,4> S = H*P*~H + R;
         Matrix<6,4> K = P*~H*Inverse(S);
@@ -224,8 +225,8 @@ public:
         if (sensors.gpsX != lastX ||
             sensors.gpsY != lastY) {
             // New gps data
-            float dx = lastX - sensors.gpsX;
-            float dy = lastX - sensors.gpsX;
+            float dx = sensors.gpsX - lastX;
+            float dy = sensors.gpsX - lastY;
             sensors.distGPS = sqrt(pow(dx, 2.) + pow(dy, 2.));
             sensors.courseGPS = courseTo(dx, dy);
 

@@ -401,24 +401,20 @@ void processGPS(){
             g_homeSet = true;
             debugCharacteristic.writeValue("Home set");
         } else {
-            double lat = gps.location.lat();
-            double lng = gps.location.lng();
+            *p_lat = gps.location.lat();
+            *p_lng = gps.location.lng();
             double dist = TinyGPSPlus::distanceBetween(
                 g_homeLat,
                 g_homeLng,
-                lat,
-                lng);
+                *p_lat,
+                *p_lng);
             double angle = TinyGPSPlus::courseTo(
                 g_homeLat,
                 g_homeLng,
-                lat,
-                lng);
-            double x = dist*sin(angle*DEG_TO_RAD);
-            double y = dist*cos(angle*DEG_TO_RAD);
-            memcpy(p_x, &x, 8);
-            memcpy(p_y, &y, 8);
-            memcpy(p_lat, &lat, 8);
-            memcpy(p_lng, &lng, 8);
+                *p_lat,
+                *p_lng);
+            *p_x = dist*sin(angle*DEG_TO_RAD);
+            *p_y = dist*cos(angle*DEG_TO_RAD);
         }
         g_status.setStatus(GPS_AVAIL);
     } else {
