@@ -603,8 +603,8 @@ void getRCControl(){
     float power_left  = mapfloat((y + x)*m, -1600.*1800., 1600.*1800., -1., 1.);
     float power_right = mapfloat((y - x)*m, -1600.*1800., 1600.*1800., -1., 1.);
 
-    *p_powerLeft  = constrain(power_left, -1, 1);
-    *p_powerRight = constrain(power_right, -1, 1);
+    *p_powerLeft  = constrain(power_left, -2, 2);
+    *p_powerRight = constrain(power_right, -2, 2);
 }
 
 void updateKalmanFilter() {
