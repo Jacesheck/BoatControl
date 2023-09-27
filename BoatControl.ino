@@ -378,6 +378,8 @@ public:
     }
 };
 
+WaypointController g_waypointController;
+
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
 
@@ -459,8 +461,16 @@ void loop() {
             unsigned long currentMillis = millis();
             unsigned long dt = currentMillis - prevMillis;
             if (dt > EVENT_PERIOD){
-                getRCControl();
                 prevMillis = currentMillis;
+                getRCControl();
+                g_motorHandler.run();
+            }
+        } else {
+            unsigned long currentMillis = millis();
+            unsigned long dt = currentMillis - prevMillis;
+            if (dt > EVENT_PERIOD){
+                prevMillis = currentMillis;
+                g_waypointController.run();
                 g_motorHandler.run();
             }
         }
@@ -638,8 +648,7 @@ void processInputsAndSensors(){
     if (g_status.getStatus(RC_MODE)){
         getRCControl();
     } else {
-        static WaypointController controller;
-        controller.run();
+        g_waypointController.run();
     }
 
     if (IMU.gyroscopeAvailable()){
