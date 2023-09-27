@@ -89,15 +89,13 @@ class KalmanFilter {
                          sensors.rz};
         Matrix<4,6> H = {1., 0., 0., 0., 0., 0.,
                          0., 1., 0., 0., 0., 0.,
-                         0., 0., 0., 0., 0., 0.,
+                         0., 0., 0., 0., 1., 0.,
                          0., 0., 0., 0., 0., 1.};
-        if (sensors.distGPS > mGpsNoise)
-            H(2, 4) = 1.;
         Matrix<4,4> R = {mGpsNoise, 0., 0., 0.,
                          0., mGpsNoise, 0., 0.,
                          0., 0., 1., 0.,
                          0., 0., 0., mGyroNoise};
-        R(2, 2) = fmax(0., mGpsAngleNoise*(0.5 - sensors.distGPS));
+        R(2, 2) = fmaxf(0., mGpsAngleNoise*(0.5 - sensors.distGPS));
         Matrix<4,1> y = z - H*x;
         Matrix<4,4> S = H*P*~H + R;
         Matrix<6,4> K = P*~H*Inverse(S);

@@ -31,10 +31,11 @@ BLECharacteristic kalmanCharacteristic("933963ae-cc8e-4704-bd3c-dc53721ba956", B
 
 // Status setup
 enum status_e {
-    GPS_AVAIL   = 1 << 0,
-    RC_AVAIL    = 1 << 1,
-    INITIALISED = 1 << 2,
-    RC_MODE     = 1 << 3, // Manual rc control
+    GPS_AVAIL       = 1 << 0,
+    RC_AVAIL        = 1 << 1,
+    INITIALISED     = 1 << 2,
+    RC_MODE         = 1 << 3, // Manual rc control
+    MOVING_WAYPOINT = 1 << 4, // Moving waypoint mode
 };
 
 // GPS setup
@@ -50,8 +51,8 @@ bfs::SbusData data;
 
 // Waypoint data
 int g_numWaypoints = 0;
-int g_waypointPointer = 0;
-double g_waypointCoords[10] = {};
+int g_waypointIdx = 0;
+double g_waypointCoords[MAXCOORDS] = {};
 
 // Homing data
 bool g_homeSet = false;
@@ -77,7 +78,13 @@ float*  p_rz         = (float*)  (g_telemOutput + 40);
 
 // Kalman data
 const unsigned int KALMAN_SIZE = sizeof(float)*6;
-float g_kalmanOutput[6];
+float g_kalmanOutput[6] = {};
+float* p_kalmanX        = &g_kalmanOutput[0];
+float* p_kalmanY        = &g_kalmanOutput[1];
+float* p_kalmanDX       = &g_kalmanOutput[2];
+float* p_kalmanDY       = &g_kalmanOutput[3];
+float* p_kalmanHeading  = &g_kalmanOutput[4];
+float* p_kalmanDHeading = &g_kalmanOutput[5];
 
 // Kalman filter
 KalmanFilter kf(((float) EVENT_PERIOD) / 1000);
@@ -245,12 +252,129 @@ class PID {
 public:
     PID(float p, float i, float d) : mP(p), mI(i), mD(d) {}
 
-    float run(float setpoint, float observation, bool reset = false) {
-        float e = wrap180(setpoint - observation);
-        float de = reset ? 0 : (wrap180(e - this->prev_e));
-        this->prev_e = e;
+    float run(float error, bool reset = false) {
+        error = wrap180(error);
+        float de = reset ? 0 : (wrap180(error - this->prev_e));
+        this->prev_e = error;
+        return mP * error + mD * de / dt; // I control not needed
+    }
+};
 
-        return mP * e + mD * de / dt; // I control not needed
+
+class WaypointController {
+    void normalize(float& left, float& right, float limit) {
+        float total = abs(left) + abs(right);
+        if (total > limit) {
+            left  *= limit / total;
+            right *= limit / total;
+        }
+    }
+
+    float handleHeading(float headingError) {
+        static PID pid(0.05, 0., 0.03);
+
+        float rotation_power = pid.run(headingError);
+        rotation_power = constrain(rotation_power, -1, 1);
+        return rotation_power;
+    }
+
+    float handleThrust(float headingError) {
+        float dist_power;
+        if (g_status.getStatus(MOVING_WAYPOINT)) {
+            static PID thrust_pid(0.45, 0., 0.35);
+            dist_power = thrust_pid.run(headingError);
+        } else {
+            dist_power = (abs(headingError) < 15) ? 1 : 0;
+        }
+        return dist_power;
+    }
+
+public:
+    void run() {
+        // Find waypoint / home
+        float waypoint_lat;
+        float waypoint_lng;
+        static bool going_home = false;
+
+        if (g_status.getStatus(MOVING_WAYPOINT)) {
+            // Move south of home
+            static double moving_waypoint_lat = 0.;
+            if (moving_waypoint_lat == 0.) {
+                moving_waypoint_lat = g_homeLat;
+            }
+            moving_waypoint_lat -= 0.1 / 111139.; // Move 0.1m
+            waypoint_lat = moving_waypoint_lat;
+            waypoint_lng = g_homeLng;
+
+            // Stop after 5 seconds
+            static long timer = 0;
+            timer ++;
+            if (timer > 5 * 1000 / EVENT_PERIOD) {
+                timer = 0;
+                moving_waypoint_lat = 0.;
+                g_status.unsetStatus(MOVING_WAYPOINT);
+                *p_powerLeft = 0;
+                *p_powerRight = 0;
+                g_status.setStatus(RC_MODE);
+                return;
+                // TODO: Make this less messy
+            }
+        } else {
+            if (g_waypointIdx >= g_numWaypoints) {
+                // Go home
+                going_home = true;
+                waypoint_lat = g_homeLat;
+                waypoint_lng = g_homeLng;
+            } else {
+                // Go to next
+                waypoint_lat = g_waypointCoords[g_waypointIdx];
+                waypoint_lng = g_waypointCoords[g_waypointIdx+1];
+            }
+        }
+        double current_lat = gps.location.lat();
+        double current_lng = gps.location.lng();
+        double desired_heading = TinyGPSPlus::courseTo(
+            current_lat, current_lng,
+            waypoint_lat, waypoint_lng
+        );
+        double distance = TinyGPSPlus::distanceBetween(
+            current_lat, current_lng,
+            waypoint_lat, waypoint_lng
+        );
+
+        if (distance > 1000) {
+            g_status.setStatus(RC_MODE);
+            *p_powerLeft = 0;
+            *p_powerRight = 0;
+            g_waypointIdx = 0;
+            debugCharacteristic.writeValue("Distance error");
+            return;
+        }
+
+        // Handle to waypoint
+        float heading_error = wrap180(desired_heading - *p_kalmanHeading);
+        float rot_power     = this->handleHeading(heading_error);
+        float thrust_power  = this->handleThrust(heading_error);
+        float left_power    = thrust_power + rot_power;
+        float right_power   = thrust_power - rot_power;
+        this->normalize(left_power, right_power, 1.0);
+        *p_powerLeft  = left_power;
+        *p_powerRight = right_power;
+
+        if (distance < 2.) {
+            // Move to next coords
+            if (!g_status.getStatus(MOVING_WAYPOINT))
+                g_waypointIdx += 2;
+
+            if (going_home) {
+                g_status.setStatus(RC_MODE);
+                debugCharacteristic.writeValue("Found home");
+                *p_powerLeft = 0;
+                *p_powerRight = 0;
+                going_home = false;
+                g_waypointIdx = 0;
+            }
+        }
     }
 };
 
@@ -361,6 +485,9 @@ void processCommand(){
             *p_powerLeft = 0;
             *p_powerRight = 0;
             break;
+        case 'a':
+            g_status.toggleStatus(MOVING_WAYPOINT);
+            break;
         default :
             debugCharacteristic.writeValue("Something else");
             break;
@@ -369,10 +496,9 @@ void processCommand(){
 
 // Get coordinates from coords characteristic
 void processCoords(){
-    g_numWaypoints = MAXCOORDS;
     for (int i = 0;i < MAXCOORDS*2; i++){
         double* pCoords = (double*) coordsCharacteristic.value();
-        g_waypointPointer = 0;
+        g_waypointIdx = 0;
         if (abs(pCoords[i]) < 0.01){
             // Check odd coords sent
             if (i % 2 == 1){
@@ -401,20 +527,24 @@ void processGPS(){
             g_homeSet = true;
             debugCharacteristic.writeValue("Home set");
         } else {
-            *p_lat = gps.location.lat();
-            *p_lng = gps.location.lng();
+            double lat = gps.location.lat();
+            double lng = gps.location.lng();
             double dist = TinyGPSPlus::distanceBetween(
                 g_homeLat,
                 g_homeLng,
-                *p_lat,
-                *p_lng);
+                lat,
+                lng);
             double angle = TinyGPSPlus::courseTo(
                 g_homeLat,
                 g_homeLng,
-                *p_lat,
-                *p_lng);
-            *p_x = dist*sin(angle*DEG_TO_RAD);
-            *p_y = dist*cos(angle*DEG_TO_RAD);
+                lat,
+                lng);
+            double x = dist*sin(angle*DEG_TO_RAD);
+            double y = dist*cos(angle*DEG_TO_RAD);
+            memcpy(p_x, &x, 8);
+            memcpy(p_y, &y, 8);
+            memcpy(p_lat, &lat, 8);
+            memcpy(p_lng, &lng, 8);
         }
         g_status.setStatus(GPS_AVAIL);
     } else {
@@ -508,11 +638,8 @@ void processInputsAndSensors(){
     if (g_status.getStatus(RC_MODE)){
         getRCControl();
     } else {
-        static PID pid(0.05, 0., 0.03);
-        float power = pid.run(180, g_kalmanOutput[4]);
-        power = constrain(power, -1, 1);
-        *p_powerLeft = power;
-        *p_powerRight = -power;
+        static WaypointController controller;
+        controller.run();
     }
 
     if (IMU.gyroscopeAvailable()){
