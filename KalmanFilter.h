@@ -56,7 +56,7 @@ class KalmanFilter {
     float b1 = 0.8;
     float b2 = 3.;
     float mGpsNoise = 4.;
-    float mGpsAngleNoise = 10;
+    float mGpsAngleNoise = 80;
     float mGyroNoise = 0.1;
     float mMotorForce = 0.6;
     float mMotorTorque = 100;
@@ -133,12 +133,12 @@ public:
 
         // Init Q
         Q.Fill(0);
-        Q(0,0) = 0.5;
-        Q(1,1) = 0.5;
-        Q(2,2) = 5.0;
-        Q(3,3) = 5.0;
-        Q(4,4) = 0.5;
-        Q(5,5) = 2.0;
+        Q(0,0) = 0.05;
+        Q(1,1) = 0.05;
+        Q(2,2) = 0.5;
+        Q(3,3) = 0.5;
+        Q(4,4) = 0.1;
+        Q(5,5) = 0.1;
 
         // Init B
         B = {0., 0.,
@@ -224,7 +224,7 @@ public:
             sensors.gpsY != lastY) {
             // New gps data
             float dx = sensors.gpsX - lastX;
-            float dy = sensors.gpsX - lastY;
+            float dy = sensors.gpsY - lastY;
             sensors.distGPS = sqrt(pow(dx, 2.) + pow(dy, 2.));
             sensors.courseGPS = courseTo(dx, dy);
 

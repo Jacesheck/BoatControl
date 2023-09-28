@@ -16,6 +16,8 @@
 
 #define EVENT_PERIOD 100
 
+#define LATM 111139.
+
 BLEService boatService("fff0");
 
 // Please don't change
@@ -302,7 +304,7 @@ public:
             if (moving_waypoint_lat == 0.) {
                 moving_waypoint_lat = g_homeLat;
             }
-            moving_waypoint_lat -= 0.1 / 111139.; // Move 0.1m
+            moving_waypoint_lat -= 0.1 / LATM; // Move 0.1m
             waypoint_lat = moving_waypoint_lat;
             waypoint_lng = g_homeLng;
 
@@ -331,8 +333,8 @@ public:
                 waypoint_lng = g_waypointCoords[g_waypointIdx+1];
             }
         }
-        double current_lat = gps.location.lat();
-        double current_lng = gps.location.lng();
+        double current_lat = g_homeLat + *p_kalmanY / LATM;
+        double current_lng = g_homeLng + *p_kalmanX / LATM;
         double desired_heading = TinyGPSPlus::courseTo(
             current_lat, current_lng,
             waypoint_lat, waypoint_lng
@@ -361,10 +363,12 @@ public:
         *p_powerLeft  = left_power;
         *p_powerRight = right_power;
 
-        if (distance < 2.) {
+        if (distance < 5.) {
             // Move to next coords
-            if (!g_status.getStatus(MOVING_WAYPOINT))
+            if (!g_status.getStatus(MOVING_WAYPOINT)) {
                 g_waypointIdx += 2;
+                debugCharacteristic.writeValue("Found waypoint");
+            }
 
             if (going_home) {
                 g_status.setStatus(RC_MODE);
