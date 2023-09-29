@@ -16,8 +16,6 @@
 
 #define EVENT_PERIOD 100
 
-#define LATM 111139.
-
 BLEService boatService("fff0");
 
 // Please don't change
@@ -52,7 +50,7 @@ bfs::SbusRx sbus(&Serial1);
 bfs::SbusData data;
 
 // Waypoint data
-int g_numWaypoints = 0;
+int g_lenWaypoints = 0;
 int g_waypointIdx = 0;
 double g_waypointCoords[MAXCOORDS] = {};
 
@@ -68,7 +66,7 @@ const int DEADZONE = 100;
 float rx, ry;
 
 // Telemetry data
-const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(float)*3;
+const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(float)*5;
 byte g_telemOutput[TELEM_SIZE];
 double* p_x          = (double*) (g_telemOutput);
 double* p_y          = (double*) (g_telemOutput + 8);
@@ -77,6 +75,8 @@ double* p_lng        = (double*) (g_telemOutput + 24);
 float*  p_powerLeft  = (float*)  (g_telemOutput + 32); // -1..1
 float*  p_powerRight = (float*)  (g_telemOutput + 36); // -1..1
 float*  p_rz         = (float*)  (g_telemOutput + 40);
+float*  p_wpHeading  = (float*)  (g_telemOutput + 44);
+float*  p_wpDist     = (float*)  (g_telemOutput + 48);
 
 // Kalman data
 const unsigned int KALMAN_SIZE = sizeof(float)*6;
@@ -87,6 +87,21 @@ float* p_kalmanDX       = &g_kalmanOutput[2];
 float* p_kalmanDY       = &g_kalmanOutput[3];
 float* p_kalmanHeading  = &g_kalmanOutput[4];
 float* p_kalmanDHeading = &g_kalmanOutput[5];
+
+void destinationFrom(double lat1, double lng1, double& lat2, double& lng2, double course, double distance) {
+    double R = 6372795;
+    double delta = distance / R;
+    lat1 = radians(lat1);
+    lng1 = radians(lng1);
+    course = radians(course);
+    lat2 = asin(sin(lat1) * cos(delta) +
+                cos(lat1) * sin(delta) * cos(course));
+    double dlng = atan2(sin(course) * sin(delta) * cos(lat1),
+                        cos(delta) - sin(lat1) * sin(lat2));
+    lng2 = lng1 + dlng;
+    lat2 = degrees(lat2);
+    lng2 = degrees(lng2);
+}
 
 // Kalman filter
 KalmanFilter kf(((float) EVENT_PERIOD) / 1000);
@@ -286,16 +301,19 @@ class WaypointController {
             static PID thrust_pid(0.45, 0., 0.35);
             dist_power = thrust_pid.run(headingError);
         } else {
-            dist_power = (abs(headingError) < 15) ? 1 : 0;
+            dist_power = pow(cos(headingError) < 15, 21);
         }
         return dist_power;
     }
 
 public:
     void run() {
+        if (!g_status.getStatus(GPS_AVAIL)) return;
+        if (g_lenWaypoints == 0) return;
+
         // Find waypoint / home
-        float waypoint_lat;
-        float waypoint_lng;
+        double waypoint_lat;
+        double waypoint_lng;
         static bool going_home = false;
 
         if (g_status.getStatus(MOVING_WAYPOINT)) {
@@ -304,9 +322,7 @@ public:
             if (moving_waypoint_lat == 0.) {
                 moving_waypoint_lat = g_homeLat;
             }
-            moving_waypoint_lat -= 0.1 / LATM; // Move 0.1m
-            waypoint_lat = moving_waypoint_lat;
-            waypoint_lng = g_homeLng;
+            destinationFrom(waypoint_lat, waypoint_lng, waypoint_lat, waypoint_lng, 180, 0.1);
 
             // Stop after 5 seconds
             static long timer = 0;
@@ -322,7 +338,7 @@ public:
                 // TODO: Make this less messy
             }
         } else {
-            if (g_waypointIdx >= g_numWaypoints) {
+            if (g_waypointIdx >= g_lenWaypoints && g_waypointIdx > 0) {
                 // Go home
                 going_home = true;
                 waypoint_lat = g_homeLat;
@@ -333,16 +349,23 @@ public:
                 waypoint_lng = g_waypointCoords[g_waypointIdx+1];
             }
         }
-        double current_lat = g_homeLat + *p_kalmanY / LATM;
-        double current_lng = g_homeLng + *p_kalmanX / LATM;
+        // Convert current x and y to lat and lng
+        double course = courseTo(*p_kalmanX, *p_kalmanY);
+        double distance = sqrt(pow(*p_kalmanX, 2) + pow(*p_kalmanY, 2));
+        double current_lat;
+        double current_lng;
+        destinationFrom(g_homeLat, g_homeLng, current_lat, current_lng, course, distance);
+
         double desired_heading = TinyGPSPlus::courseTo(
             current_lat, current_lng,
             waypoint_lat, waypoint_lng
         );
-        double distance = TinyGPSPlus::distanceBetween(
+        distance = TinyGPSPlus::distanceBetween(
             current_lat, current_lng,
             waypoint_lat, waypoint_lng
         );
+        *p_wpHeading = desired_heading;
+        *p_wpDist = distance;
 
         if (distance > 1000) {
             g_status.setStatus(RC_MODE);
@@ -360,17 +383,19 @@ public:
         float left_power    = thrust_power + rot_power;
         float right_power   = thrust_power - rot_power;
         this->normalize(left_power, right_power, 1.0);
-        *p_powerLeft  = left_power;
-        *p_powerRight = right_power;
+        if (!g_status.getStatus(RC_MODE)) {
+            *p_powerLeft  = left_power;
+            *p_powerRight = right_power;
+        }
 
-        if (distance < 5.) {
+        if (distance < 15.) {
             // Move to next coords
-            if (!g_status.getStatus(MOVING_WAYPOINT)) {
+            if (!g_status.getStatus(RC_MODE) && !g_status.getStatus(MOVING_WAYPOINT)) {
                 g_waypointIdx += 2;
                 debugCharacteristic.writeValue("Found waypoint");
             }
 
-            if (going_home) {
+            if (!g_status.getStatus(RC_MODE) && going_home) {
                 g_status.setStatus(RC_MODE);
                 debugCharacteristic.writeValue("Found home");
                 *p_powerLeft = 0;
@@ -510,15 +535,15 @@ void processCommand(){
 
 // Get coordinates from coords characteristic
 void processCoords(){
+    double* pCoords = (double*) coordsCharacteristic.value();
     for (int i = 0;i < MAXCOORDS*2; i++){
-        double* pCoords = (double*) coordsCharacteristic.value();
         g_waypointIdx = 0;
         if (abs(pCoords[i]) < 0.01){
             // Check odd coords sent
             if (i % 2 == 1){
                 debugCharacteristic.writeValue("Invalid coord count");
             } else {
-                g_numWaypoints = i / 2;
+                g_lenWaypoints = i;
             }
             break; // We are done reading
         }else{
@@ -528,7 +553,7 @@ void processCoords(){
     }
 
     String output = "Coords written: ";
-    output += g_numWaypoints;
+    output += g_lenWaypoints / 2;
     debugCharacteristic.writeValue(output);
 }
 
@@ -614,11 +639,18 @@ void getRCControl(){
         y = 0;
     }
 
-    float power_left  = mapfloat((y + x)*m, -1600.*1800., 1600.*1800., -1., 1.);
-    float power_right = mapfloat((y - x)*m, -1600.*1800., 1600.*1800., -1., 1.);
+    float power_left  = mapfloat((y + x)*m, -1600.*1800., 1600.*1800., -2., 2.);
+    float power_right = mapfloat((y - x)*m, -1600.*1800., 1600.*1800., -2., 2.);
 
-    *p_powerLeft  = constrain(power_left, -2, 2);
-    *p_powerRight = constrain(power_right, -2, 2);
+    if (abs(power_left) > 0.5 || abs(power_right > 0.5)) {
+        // Take over if input power to rc controller (takeover)
+        g_status.setStatus(RC_MODE);
+    }
+
+    if (g_status.getStatus(RC_MODE)) {
+        *p_powerLeft  = constrain(power_left, -1, 1);
+        *p_powerRight = constrain(power_right, -1, 1);
+    }
 }
 
 void updateKalmanFilter() {
@@ -649,11 +681,9 @@ void processInputsAndSensors(){
         }
     }
 
-    if (g_status.getStatus(RC_MODE)){
-        getRCControl();
-    } else {
-        g_waypointController.run();
-    }
+    // Mode handling inside each
+    getRCControl();
+    g_waypointController.run();
 
     if (IMU.gyroscopeAvailable()){
         float rz;
