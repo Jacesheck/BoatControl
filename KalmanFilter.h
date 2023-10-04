@@ -56,7 +56,7 @@ class KalmanFilter {
     float b1 = 0.8;
     float b2 = 3.;
     float mGpsNoise = 4.;
-    float mGpsAngleNoise = 300;
+    float mGpsAngleNoise = 10;
     float mGyroNoise = 0.1;
     float mMotorForce = 0.6;
     float mMotorTorque = 100;
@@ -137,8 +137,8 @@ public:
         Q(1,1) = 0.05;
         Q(2,2) = 0.5;
         Q(3,3) = 0.5;
-        Q(4,4) = 0.1;
-        Q(5,5) = 0.1;
+        Q(4,4) = 0.01;
+        Q(5,5) = 0.01;
 
         // Init B
         B = {0., 0.,
