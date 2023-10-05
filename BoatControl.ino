@@ -62,8 +62,9 @@ double g_homeLng;
 // Frsky Control
 const int DEADZONE = 100;
 
-// IMU data (not used)
+// IMU data
 float rx, ry;
+float g_gyroDrift = 0.;
 
 // Telemetry data
 const unsigned int TELEM_SIZE = sizeof(double)*4 + sizeof(float)*5;
@@ -527,6 +528,9 @@ void processCommand(){
         case 'a':
             g_status.toggleStatus(MOVING_WAYPOINT);
             break;
+        case 'i':
+            g_gyroDrift = 0.;
+            break;
         default :
             debugCharacteristic.writeValue("Something else");
             break;
@@ -688,8 +692,9 @@ void processInputsAndSensors(){
     if (IMU.gyroscopeAvailable()){
         float rz;
         IMU.readGyroscope(rx, ry, rz);
-        static const float drift = rz;
-        rz -= drift;
+        if (g_gyroDrift == 0.) // Reset drift
+            g_gyroDrift = rz;
+        rz -= g_gyroDrift;
         rz *= 360. / 300.; // From callibration
         *p_rz = rz;
     }
