@@ -530,6 +530,7 @@ void processCommand(){
             break;
         case 'i':
             g_gyroDrift = 0.;
+            debugCharacteristic.writeValue("Reset drift");
             break;
         default :
             debugCharacteristic.writeValue("Something else");
