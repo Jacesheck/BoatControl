@@ -56,7 +56,7 @@ class KalmanFilter {
     float b1 = 0.8;
     float b2 = 3.;
     float mGpsNoise = 4.;
-    float mGpsAngleNoise = 10;
+    float mGpsAngleNoise = 300;
     float mGyroNoise = 0.1;
     float mMotorForce = 0.6;
     float mMotorTorque = 100;
@@ -95,7 +95,7 @@ class KalmanFilter {
                          0., mGpsNoise, 0., 0.,
                          0., 0., 1., 0.,
                          0., 0., 0., mGyroNoise};
-        R(2, 2) = fmaxf(20., mGpsAngleNoise*(0.5 - sensors.distGPS));
+        R(2, 2) = fmaxf(20., mGpsAngleNoise*(1 - sensors.distGPS));
         Matrix<4,1> y = z - H*x;
         Matrix<4,4> S = H*P*~H + R;
         Matrix<6,4> K = P*~H*Inverse(S);

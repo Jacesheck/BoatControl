@@ -389,7 +389,7 @@ public:
             *p_powerRight = right_power;
         }
 
-        if (distance < 15.) {
+        if (distance < 9.) {
             // Move to next coords
             if (!g_status.getStatus(RC_MODE) && !g_status.getStatus(MOVING_WAYPOINT)) {
                 g_waypointIdx += 2;
@@ -696,7 +696,7 @@ void processInputsAndSensors(){
         if (g_gyroDrift == 0.) // Reset drift
             g_gyroDrift = rz;
         rz -= g_gyroDrift;
-        rz *= 360. / 300.; // From callibration
+        rz *= 2 * 360. / 300.; // From callibration
         *p_rz = rz;
     }
 
